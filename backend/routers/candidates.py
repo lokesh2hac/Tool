@@ -26,9 +26,20 @@ class AnalyzeRequest(BaseModel):
     messages: List[Message]
 
 
+class BulkAnalyzeGroup(BaseModel):
+    group_username: str
+    group_id: Optional[str] = None
+    messages: List[Message]
+
+
+class BulkAnalyzeRequest(BaseModel):
+    groups: List[BulkAnalyzeGroup]
+
+
 @router.post("/analyze")
 async def analyze_candidates(body: AnalyzeRequest, request: Request):
-    phone = _require_session(request)
+    """Analyze a single group's messages."""
+    _require_session(request)
 
     messages_list = [m.dict() for m in body.messages]
 
@@ -37,7 +48,73 @@ async def analyze_candidates(body: AnalyzeRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    saved_candidates = []
+    return await _save_candidates(candidates, body.group_id)
+
+
+@router.post("/analyze-bulk")
+async def analyze_bulk(body: BulkAnalyzeRequest, request: Request):
+    """
+    Analyze multiple groups sequentially.
+    Returns per-group results + summary stats.
+    Failed groups are skipped, successful ones returned.
+    """
+    _require_session(request)
+
+    if not body.groups:
+        raise HTTPException(status_code=400, detail="No groups provided")
+
+    all_candidates = []
+    success_count = 0
+    fail_count = 0
+    errors = []
+
+    for grp in body.groups:
+        # Dedupe + clean messages
+        messages_list = [
+            m.dict() for m in grp.messages
+            if m.text and m.text.strip()
+        ]
+
+        if not messages_list:
+            fail_count += 1
+            errors.append({"group": grp.group_username, "error": "No valid messages"})
+            continue
+
+        try:
+            candidates = await gemini.analyze_candidates(messages_list)
+            saved = await _save_candidates(candidates, grp.group_id)
+            for c in saved:
+                c["source_group"] = grp.group_username
+            all_candidates.extend(saved)
+            success_count += 1
+        except Exception as e:
+            fail_count += 1
+            errors.append({"group": grp.group_username, "error": str(e)})
+            continue
+
+    # Sort final list: Indian first, then by score
+    all_candidates.sort(
+        key=lambda x: (
+            0 if x.get("is_indian_likely") else 1,
+            -int(x.get("score", 0))
+        )
+    )
+
+    return {
+        "candidates": all_candidates,
+        "summary": {
+            "total_groups": len(body.groups),
+            "success": success_count,
+            "failed": fail_count,
+            "total_candidates": len(all_candidates),
+            "errors": errors,
+        }
+    }
+
+
+async def _save_candidates(candidates: list, group_id: Optional[str]) -> list:
+    """Save candidates to Supabase and return enriched list."""
+    saved = []
     for c in candidates:
         try:
             row = {
@@ -48,16 +125,15 @@ async def analyze_candidates(body: AnalyzeRequest, request: Request):
                 "ai_reason": c.get("reason", ""),
                 "status": "new",
             }
-            if body.group_id:
-                row["group_id"] = body.group_id
+            if group_id:
+                row["group_id"] = group_id
             res = supabase.table("candidates").insert(row).execute()
             if res.data:
                 c["db_id"] = res.data[0]["id"]
-            saved_candidates.append(c)
+            saved.append(c)
         except Exception:
-            saved_candidates.append(c)
-
-    return saved_candidates
+            saved.append(c)
+    return saved
 
 
 @router.get("")
@@ -65,14 +141,12 @@ async def list_candidates(request: Request):
     phone = _require_session(request)
 
     try:
-        # Get all groups for this phone
         groups_res = supabase.table("scanned_groups").select("id").eq("session_phone", phone).execute()
         group_ids = [g["id"] for g in (groups_res.data or [])]
 
         if not group_ids:
             return []
 
-        # Get candidates for those groups
         result = supabase.table("candidates").select(
             "id, telegram_username, display_name, message_sample, ai_score, ai_reason, status, group_id, created_at"
         ).in_("group_id", group_ids).order("ai_score", desc=True).execute()
