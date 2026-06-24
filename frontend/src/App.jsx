@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Candidates from './pages/Candidates'
 import Outreach from './pages/Outreach'
+import ApiKeys from './pages/ApiKeys'
 import Navbar from './components/Navbar'
 import Toast from './components/Toast'
 
@@ -54,6 +55,10 @@ export default function App() {
         <Route
           path="/outreach"
           element={auth.logged_in ? <Outreach /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/api-keys"
+          element={auth.logged_in ? <ApiKeys showToast={showToast} /> : <Navigate to="/" replace />}
         />
         {/* Catch-all — redirect unknown paths to home */}
         <Route path="*" element={<Navigate to="/" replace />} />

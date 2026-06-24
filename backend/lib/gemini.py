@@ -16,6 +16,26 @@ if not GROQ_API_KEY:
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+
+# Module-level variable for the active Gemini key (set at runtime per request)
+_active_gemini_key: str = ""
+
+
+class GeminiRateLimitError(Exception):
+    """Raised when Gemini returns HTTP 429 (rate limited)."""
+    def __init__(self, key_used: str = "", key_id: str = ""):
+        self.key_used = key_used
+        self.key_id = key_id
+        super().__init__(f"Gemini rate limit hit for key_id={key_id!r}")
+
+
+def set_active_gemini_key(api_key: str) -> None:
+    """Set the Gemini API key to use for the current request."""
+    global _active_gemini_key
+    _active_gemini_key = api_key.strip() if api_key else ""
+
 
 # ─────────────────────────────────────────
 # KEYWORD GENERATION PROMPT
@@ -147,23 +167,81 @@ def _call_groq_sync(prompt: str) -> str:
 
 
 # ─────────────────────────────────────────
+# GEMINI CALL (httpx REST)
+# ─────────────────────────────────────────
+def _call_gemini_sync(prompt: str, key_id: str = "") -> str:
+    """REST call to Gemini using httpx. Raises GeminiRateLimitError on 429."""
+    api_key = _active_gemini_key or GEMINI_API_KEY
+    if not api_key:
+        raise RuntimeError("No Gemini API key configured")
+
+    payload = {
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 4096,
+        },
+        "systemInstruction": {
+            "parts": [{"text": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text."}]
+        }
+    }
+
+    with httpx.Client(timeout=60) as client:
+        resp = client.post(
+            f"{GEMINI_URL}?key={api_key}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        if resp.status_code == 429:
+            raise GeminiRateLimitError(key_used=api_key, key_id=key_id)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini HTTP {resp.status_code}: {resp.text}")
+        result = resp.json()
+
+    candidates = result.get("candidates", [])
+    if not candidates:
+        raise RuntimeError("Gemini returned no candidates in response")
+    return candidates[0]["content"]["parts"][0]["text"]
+
+
+def _call_ai_sync(prompt: str, key_id: str = "") -> str:
+    """
+    Try Gemini first (if any key is configured); fall back to Groq only if NO
+    Gemini key is available at all.  GeminiRateLimitError is always re-raised
+    so the caller/frontend can handle key switching.
+    """
+    gemini_key = _active_gemini_key or GEMINI_API_KEY
+    if gemini_key:
+        # Gemini is configured — use it exclusively; re-raise rate-limit errors
+        return _call_gemini_sync(prompt, key_id=key_id)
+    # No Gemini key configured at all — fall back to Groq
+    return _call_groq_sync(prompt)
+
+
+# ─────────────────────────────────────────
 # PUBLIC FUNCTIONS
 # ─────────────────────────────────────────
 async def generate_keywords(brand_name: str) -> dict:
     """
     Generate multi-strategy search keywords using Groq.
     Returns dict: {brand, affiliate, category, hinglish}
-    Falls back to hardcoded keywords if Groq fails.
+    Falls back to hardcoded keywords if AI fails.
     """
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
         loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_groq_sync, prompt)
+        raw_text = await loop.run_in_executor(None, _call_ai_sync, prompt)
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
         if isinstance(keywords, dict):
             return keywords
         return _fallback_keywords(brand_name)
+    except GeminiRateLimitError:
+        raise
     except Exception:
         return _fallback_keywords(brand_name)
 
@@ -178,11 +256,12 @@ def _fallback_keywords(brand_name: str) -> dict:
     }
 
 
-async def analyze_candidates(messages_list: list) -> list:
+async def analyze_candidates(messages_list: list, key_id: str = "") -> list:
     """
     Analyze messages to find shortlistable affiliate candidates.
     Only includes users WITH a Telegram username (outreach-ready).
-    Uses Groq llama-3.3-70b-versatile.
+    Uses Gemini if configured, otherwise Groq llama-3.3-70b-versatile.
+    Raises GeminiRateLimitError if the active Gemini key is rate limited.
     """
     if not messages_list:
         return []
@@ -204,25 +283,25 @@ async def analyze_candidates(messages_list: list) -> list:
     formatted = "\n".join(formatted_lines[:150])
     prompt = CANDIDATE_ANALYSIS_PROMPT.format(messages=formatted)
 
+    loop = asyncio.get_event_loop()
+    raw_text = await loop.run_in_executor(None, lambda: _call_ai_sync(prompt, key_id=key_id))
+    raw = _strip_markdown(raw_text)
     try:
-        loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_groq_sync, prompt)
-        raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
-        if isinstance(candidates, list):
-            # Hard filter: must have real username — no username = can't do outreach
-            candidates = [
-                c for c in candidates
-                if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
-            ]
-            # Sort: Indian first, then by score desc
-            candidates.sort(
-                key=lambda x: (
-                    0 if x.get("is_indian_likely") else 1,
-                    -int(x.get("score", 0))
-                )
-            )
-            return candidates
-        return []
     except Exception as e:
         raise RuntimeError(f"AI analysis failed: {str(e)}")
+    if isinstance(candidates, list):
+        # Hard filter: must have real username — no username = can't do outreach
+        candidates = [
+            c for c in candidates
+            if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
+        ]
+        # Sort: Indian first, then by score desc
+        candidates.sort(
+            key=lambda x: (
+                0 if x.get("is_indian_likely") else 1,
+                -int(x.get("score", 0))
+            )
+        )
+        return candidates
+    return []

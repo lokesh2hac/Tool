@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from lib import gemini
+from lib.gemini import GeminiRateLimitError
 from lib.supabase_client import supabase
 
 router = APIRouter()
@@ -14,6 +15,24 @@ def _require_session(request: Request):
     return phone
 
 
+def _resolve_gemini_key(gemini_key_id: Optional[str], gemini_api_key: Optional[str]) -> None:
+    """
+    Set the active Gemini key for this request.
+    If gemini_api_key is provided directly, use it.
+    If only gemini_key_id is provided, look up the actual key from the database.
+    """
+    if gemini_api_key:
+        gemini.set_active_gemini_key(gemini_api_key)
+        return
+    if gemini_key_id:
+        try:
+            res = supabase.table("api_keys").select("api_key").eq("id", gemini_key_id).execute()
+            if res.data:
+                gemini.set_active_gemini_key(res.data[0]["api_key"])
+        except Exception:
+            pass
+
+
 class Message(BaseModel):
     text: str
     sender_username: Optional[str] = ""
@@ -24,6 +43,8 @@ class AnalyzeRequest(BaseModel):
     group_username: str
     group_id: Optional[str] = None
     messages: List[Message]
+    gemini_key_id: Optional[str] = None
+    gemini_api_key: Optional[str] = None
 
 
 class BulkAnalyzeGroup(BaseModel):
@@ -34,6 +55,8 @@ class BulkAnalyzeGroup(BaseModel):
 
 class BulkAnalyzeRequest(BaseModel):
     groups: List[BulkAnalyzeGroup]
+    gemini_key_id: Optional[str] = None
+    gemini_api_key: Optional[str] = None
 
 
 @router.post("/analyze")
@@ -41,10 +64,17 @@ async def analyze_candidates(body: AnalyzeRequest, request: Request):
     """Analyze a single group's messages."""
     _require_session(request)
 
+    _resolve_gemini_key(body.gemini_key_id, body.gemini_api_key)
+
     messages_list = [m.dict() for m in body.messages]
 
     try:
-        candidates = await gemini.analyze_candidates(messages_list)
+        candidates = await gemini.analyze_candidates(messages_list, key_id=body.gemini_key_id or "")
+    except GeminiRateLimitError as e:
+        raise HTTPException(
+            status_code=429,
+            detail={"detail": "rate_limited", "key_id": e.key_id},
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -62,6 +92,8 @@ async def analyze_bulk(body: BulkAnalyzeRequest, request: Request):
 
     if not body.groups:
         raise HTTPException(status_code=400, detail="No groups provided")
+
+    _resolve_gemini_key(body.gemini_key_id, body.gemini_api_key)
 
     all_candidates = []
     success_count = 0
@@ -81,12 +113,17 @@ async def analyze_bulk(body: BulkAnalyzeRequest, request: Request):
             continue
 
         try:
-            candidates = await gemini.analyze_candidates(messages_list)
+            candidates = await gemini.analyze_candidates(messages_list, key_id=body.gemini_key_id or "")
             saved = await _save_candidates(candidates, grp.group_id)
             for c in saved:
                 c["source_group"] = grp.group_username
             all_candidates.extend(saved)
             success_count += 1
+        except GeminiRateLimitError as e:
+            raise HTTPException(
+                status_code=429,
+                detail={"detail": "rate_limited", "key_id": e.key_id},
+            )
         except Exception as e:
             fail_count += 1
             errors.append({"group": grp.group_username, "error": str(e)})
