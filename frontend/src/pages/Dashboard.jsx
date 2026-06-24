@@ -15,7 +15,7 @@ export default function Dashboard({ showToast }) {
   const [aiKeywords, setAiKeywords] = useState([]) // show user what AI searched
 
   // Active Gemini key chosen by the user (from ApiKeyModal)
-  const [activeGeminiKey, setActiveGeminiKey] = useState(null) // { id, api_key (not exposed), masked_key, label }
+  const [activeGeminiKey, setActiveGeminiKey] = useState(null) // { id, label }
   // Rate-limit popup state
   const [rateLimitState, setRateLimitState] = useState(null) // { groupIndex, rateLimitedKeyId, resolveKey }
 

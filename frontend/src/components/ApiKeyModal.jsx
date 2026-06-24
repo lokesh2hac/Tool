@@ -93,7 +93,7 @@ export default function ApiKeyModal({ rateLimitedKeyId, onKeySelected, onClose }
                       <p className="text-gray-500 text-xs font-mono mt-0.5">{key.masked_key}</p>
                       {limited && key.rate_limited_until && (
                         <p className="text-red-400 text-xs mt-1">
-                          Rate limited until {new Date(key.rate_limited_until).toLocaleTimeString()}
+                          Rate limited until {new Date(key.rate_limited_until).toLocaleString()}
                         </p>
                       )}
                     </div>

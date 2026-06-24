@@ -284,10 +284,12 @@ async def analyze_candidates(messages_list: list, key_id: str = "") -> list:
     prompt = CANDIDATE_ANALYSIS_PROMPT.format(messages=formatted)
 
     loop = asyncio.get_event_loop()
-    raw_text = await loop.run_in_executor(None, lambda: _call_ai_sync(prompt, key_id=key_id))
-    raw = _strip_markdown(raw_text)
     try:
+        raw_text = await loop.run_in_executor(None, lambda: _call_ai_sync(prompt, key_id=key_id))
+        raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
+    except GeminiRateLimitError:
+        raise
     except Exception as e:
         raise RuntimeError(f"AI analysis failed: {str(e)}")
     if isinstance(candidates, list):

@@ -73,7 +73,7 @@ async def analyze_candidates(body: AnalyzeRequest, request: Request):
     except GeminiRateLimitError as e:
         raise HTTPException(
             status_code=429,
-            detail={"detail": "rate_limited", "key_id": e.key_id},
+            detail={"rate_limited": True, "key_id": e.key_id},
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -122,7 +122,7 @@ async def analyze_bulk(body: BulkAnalyzeRequest, request: Request):
         except GeminiRateLimitError as e:
             raise HTTPException(
                 status_code=429,
-                detail={"detail": "rate_limited", "key_id": e.key_id},
+                detail={"rate_limited": True, "key_id": e.key_id},
             )
         except Exception as e:
             fail_count += 1

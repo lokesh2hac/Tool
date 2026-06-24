@@ -178,7 +178,7 @@ export default function ApiKeys({ showToast }) {
                   <p className="text-gray-500 text-xs font-mono">{key.masked_key}</p>
                   {limited && key.rate_limited_until && (
                     <p className="text-red-400 text-xs mt-1">
-                      Resets at {new Date(key.rate_limited_until).toLocaleTimeString()}
+                      Resets at {new Date(key.rate_limited_until).toLocaleString()}
                     </p>
                   )}
                   <p className="text-gray-600 text-xs mt-1">
