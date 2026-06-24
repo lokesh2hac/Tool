@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api'
 
 export default function Navbar({ auth, setAuth, showToast }) {
   const location = useLocation()
@@ -7,7 +7,7 @@ export default function Navbar({ auth, setAuth, showToast }) {
 
   const handleLogout = async () => {
     try {
-      await axios.post('/api/auth/logout', {}, { withCredentials: true })
+      await api.post('/api/auth/logout', {})
       setAuth({ logged_in: false })
       navigate('/')
       showToast('Logged out successfully', 'success')
@@ -35,7 +35,6 @@ export default function Navbar({ auth, setAuth, showToast }) {
   return (
     <nav className="bg-surface border-b border-gray-800 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-        {/* Logo */}
         <Link to="/dashboard" className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 to-yellow-400 flex items-center justify-center">
             <span className="text-gray-900 font-black text-sm">A2K</span>
@@ -43,14 +42,12 @@ export default function Navbar({ auth, setAuth, showToast }) {
           <span className="text-white font-bold text-lg">ACE2KING</span>
         </Link>
 
-        {/* Nav Links */}
         <div className="hidden md:flex items-center gap-1">
           {navLink('/dashboard', '🔍 Dashboard')}
           {navLink('/candidates', '🎯 Candidates')}
           {navLink('/outreach', '📬 Outreach History')}
         </div>
 
-        {/* User + Logout */}
         <div className="flex items-center gap-3">
           <div className="text-right hidden sm:block">
             {auth.username && (

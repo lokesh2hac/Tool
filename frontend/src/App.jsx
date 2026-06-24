@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from './api'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Candidates from './pages/Candidates'
@@ -9,7 +9,7 @@ import Navbar from './components/Navbar'
 import Toast from './components/Toast'
 
 export default function App() {
-  const [auth, setAuth] = useState(null) // null = loading
+  const [auth, setAuth] = useState(null)
   const [toast, setToast] = useState(null)
 
   const TOAST_DURATION_MS = 3000
@@ -20,7 +20,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    axios.get('/api/auth/status', { withCredentials: true })
+    // Use centralized api instance so VITE_API_URL is respected
+    api.get('/api/auth/status')
       .then(res => setAuth(res.data))
       .catch(() => setAuth({ logged_in: false }))
   }, [])
@@ -54,6 +55,8 @@ export default function App() {
           path="/outreach"
           element={auth.logged_in ? <Outreach /> : <Navigate to="/" replace />}
         />
+        {/* Catch-all — redirect unknown paths to home */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )

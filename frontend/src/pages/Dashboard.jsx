@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api'
 import GroupCard from '../components/GroupCard'
 
 export default function Dashboard({ showToast }) {
@@ -11,6 +11,7 @@ export default function Dashboard({ showToast }) {
   const [loadingSearch, setLoadingSearch] = useState(false)
   const [analyzeProgress, setAnalyzeProgress] = useState([])
   const [analyzing, setAnalyzing] = useState(false)
+  const [aiKeywords, setAiKeywords] = useState([]) // show user what AI searched
 
   const handleSearch = async (e) => {
     e.preventDefault()
@@ -18,14 +19,26 @@ export default function Dashboard({ showToast }) {
     setLoadingSearch(true)
     setGroups([])
     setSelectedGroups([])
+    setAiKeywords([])
     try {
-      const res = await axios.post('/api/groups/search', { keyword }, { withCredentials: true })
-      setGroups(res.data || [])
-      if ((res.data || []).length === 0) {
-        showToast('No groups found for this keyword', 'error')
+      const res = await api.post('/api/groups/search', { keyword })
+      const data = res.data || {}
+      const foundGroups = data.groups || (Array.isArray(res.data) ? res.data : [])
+      const keywords = data.keywords_used || []
+      setGroups(foundGroups)
+      setAiKeywords(keywords)
+      if (foundGroups.length === 0) {
+        showToast('No public groups found. Try a different keyword.', 'error')
+      } else {
+        showToast(`Found ${foundGroups.length} groups using AI-expanded keywords!`, 'success')
       }
     } catch (err) {
-      showToast(err.response?.data?.detail || 'Search failed', 'error')
+      const detail = err.response?.data?.detail || 'Search failed'
+      showToast(detail, 'error')
+      // If 401, session expired
+      if (err.response?.status === 401) {
+        showToast('Session expired. Please login again.', 'error')
+      }
     } finally {
       setLoadingSearch(false)
     }
@@ -57,24 +70,23 @@ export default function Dashboard({ showToast }) {
       const group = selectedGroups[i]
       const groupKey = group.group_username || group.group_title
 
-      // Update to 'fetching'
       setAnalyzeProgress(prev =>
         prev.map((p, idx) => idx === i ? { ...p, status: 'fetching' } : p)
       )
 
       try {
-        const msgRes = await axios.post('/api/groups/messages', { group_username: groupKey }, { withCredentials: true })
+        const msgRes = await api.post('/api/groups/messages', { group_username: groupKey })
         const messages = msgRes.data.messages || []
 
         setAnalyzeProgress(prev =>
           prev.map((p, idx) => idx === i ? { ...p, status: 'analyzing' } : p)
         )
 
-        await axios.post('/api/candidates/analyze', {
+        await api.post('/api/candidates/analyze', {
           group_username: groupKey,
           group_id: group.id || null,
           messages,
-        }, { withCredentials: true })
+        })
 
         setAnalyzeProgress(prev =>
           prev.map((p, idx) => idx === i ? { ...p, status: 'done' } : p)
@@ -88,8 +100,7 @@ export default function Dashboard({ showToast }) {
 
     setAnalyzing(false)
     showToast('Analysis complete! Redirecting to candidates...', 'success')
-    const REDIRECT_DELAY_MS = 1500
-    setTimeout(() => navigate('/candidates'), REDIRECT_DELAY_MS)
+    setTimeout(() => navigate('/candidates'), 1500)
   }
 
   const statusIcon = (status) => {
@@ -106,7 +117,9 @@ export default function Dashboard({ showToast }) {
       {/* Search Section */}
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-white mb-1">Find Affiliate Candidates</h1>
-        <p className="text-gray-400 mb-6">Enter an iGaming brand or keyword to discover relevant Telegram groups</p>
+        <p className="text-gray-400 mb-6">
+          Enter an iGaming brand or keyword — <span className="text-amber-400">Gemini AI</span> will expand it into smart search terms and find relevant Telegram groups
+        </p>
 
         <form onSubmit={handleSearch} className="flex gap-3">
           <input
@@ -120,11 +133,23 @@ export default function Dashboard({ showToast }) {
             {loadingSearch ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-gray-900 border-t-transparent rounded-full animate-spin" />
-                Searching...
+                AI Searching...
               </span>
             ) : '🔍 Find Groups'}
           </button>
         </form>
+
+        {/* Show AI-generated keywords */}
+        {aiKeywords.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2 items-center">
+            <span className="text-xs text-gray-500">🤖 Gemini searched for:</span>
+            {aiKeywords.map((kw, i) => (
+              <span key={i} className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-1 rounded-full">
+                {kw}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Groups Results */}
@@ -137,6 +162,14 @@ export default function Dashboard({ showToast }) {
                 <span className="ml-2 text-amber-400 text-sm">({selectedGroups.length} selected)</span>
               )}
             </h2>
+            {groups.length > 0 && (
+              <button
+                onClick={() => setSelectedGroups(selectedGroups.length === groups.length ? [] : [...groups])}
+                className="text-sm text-amber-400 hover:text-amber-300 transition-colors"
+              >
+                {selectedGroups.length === groups.length ? 'Deselect All' : 'Select All'}
+              </button>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {groups.map((group, idx) => (
@@ -151,11 +184,11 @@ export default function Dashboard({ showToast }) {
         </div>
       )}
 
-      {/* Analyze Section */}
+      {/* Analyze Button */}
       {selectedGroups.length > 0 && !analyzing && analyzeProgress.length === 0 && (
         <div className="sticky bottom-6 flex justify-center">
           <button onClick={handleAnalyze} className="btn-gold px-12 py-4 text-lg shadow-2xl shadow-amber-500/30">
-            🤖 Analyze {selectedGroups.length} Selected Group{selectedGroups.length > 1 ? 's' : ''}
+            🤖 Analyze {selectedGroups.length} Selected Group{selectedGroups.length > 1 ? 's' : ''} with AI
           </button>
         </div>
       )}
@@ -164,7 +197,7 @@ export default function Dashboard({ showToast }) {
       {analyzeProgress.length > 0 && (
         <div className="bg-surface rounded-xl border border-gray-800 p-6">
           <h3 className="text-white font-semibold mb-4">
-            {analyzing ? '⚡ Analyzing groups...' : '✅ Analysis Complete'}
+            {analyzing ? '⚡ AI Analyzing groups...' : '✅ Analysis Complete'}
           </h3>
           <div className="space-y-3">
             {analyzeProgress.map((p, idx) => (
@@ -172,9 +205,9 @@ export default function Dashboard({ showToast }) {
                 <span className="text-lg">{statusIcon(p.status)}</span>
                 <span className="text-white font-medium">{p.group.group_title}</span>
                 <span className="text-gray-400">
-                  {p.status === 'fetching' && 'Fetching messages...'}
-                  {p.status === 'analyzing' && 'Analyzing with AI...'}
-                  {p.status === 'done' && 'Done'}
+                  {p.status === 'fetching' && 'Fetching last 100 messages...'}
+                  {p.status === 'analyzing' && 'Gemini AI scoring candidates...'}
+                  {p.status === 'done' && 'Done ✓'}
                   {p.status === 'pending' && 'Waiting...'}
                   {p.status === 'error' && `Error: ${p.error || 'Unknown error'}`}
                 </span>
