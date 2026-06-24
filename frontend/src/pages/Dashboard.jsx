@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../api'
 import GroupCard from '../components/GroupCard'
 import ApiKeyModal from '../components/ApiKeyModal'
+import { getStoredModel } from '../modelConfig'
 
 export default function Dashboard({ showToast }) {
   const navigate = useNavigate()
@@ -22,12 +23,13 @@ export default function Dashboard({ showToast }) {
   const handleSearch = async (e) => {
     e.preventDefault()
     if (!keyword.trim()) return
+    const currentModel = getStoredModel()
     setLoadingSearch(true)
     setGroups([])
     setSelectedGroups([])
     setAiKeywords([])
     try {
-      const res = await api.post('/api/groups/search', { keyword })
+      const res = await api.post('/api/groups/search', { keyword, model: currentModel })
       const data = res.data || {}
       const foundGroups = data.groups || (Array.isArray(res.data) ? res.data : [])
       const keywords = data.keywords_used || []
@@ -102,6 +104,7 @@ export default function Dashboard({ showToast }) {
 
     // Use whatever active key the user has selected (may be null = use env default)
     let currentKeyId = activeGeminiKey?.id || null
+    const currentModel = getStoredModel()
 
     for (let i = 0; i < selectedGroups.length; i++) {
       const group = selectedGroups[i]
@@ -127,6 +130,7 @@ export default function Dashboard({ showToast }) {
             group_id: group.id || null,
             messages,
             gemini_key_id: currentKeyId || undefined,
+            model: currentModel,
           })
 
           setAnalyzeProgress(prev =>
@@ -189,7 +193,7 @@ export default function Dashboard({ showToast }) {
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-white mb-1">Find Affiliate Candidates</h1>
         <p className="text-gray-400 mb-6">
-          Enter an iGaming brand or keyword — <span className="text-amber-400">Gemini AI</span> will expand it into smart search terms and find relevant Telegram groups
+          Enter an iGaming brand or keyword — <span className="text-amber-400">AI</span> will expand it into smart search terms and find relevant Telegram groups
         </p>
 
         <form onSubmit={handleSearch} className="flex gap-3">
@@ -213,7 +217,7 @@ export default function Dashboard({ showToast }) {
         {/* Show AI-generated keywords */}
         {aiKeywords.length > 0 && (
           <div className="mt-4 flex flex-wrap gap-2 items-center">
-            <span className="text-xs text-gray-500">🤖 Gemini searched for:</span>
+            <span className="text-xs text-gray-500">🤖 AI searched for:</span>
             {aiKeywords.map((kw, i) => (
               <span key={i} className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-1 rounded-full">
                 {kw}
@@ -287,7 +291,7 @@ export default function Dashboard({ showToast }) {
                 <span className="text-white font-medium">{p.group.group_title}</span>
                 <span className="text-gray-400">
                   {p.status === 'fetching' && 'Fetching last 100 messages...'}
-                  {p.status === 'analyzing' && 'Gemini AI scoring candidates...'}
+                  {p.status === 'analyzing' && 'AI scoring candidates...'}
                   {p.status === 'done' && 'Done ✓'}
                   {p.status === 'pending' && 'Waiting...'}
                   {p.status === 'rate_limited' && '⚠️ Rate limited — pick a new key...'}

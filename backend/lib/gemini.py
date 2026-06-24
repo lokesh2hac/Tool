@@ -19,10 +19,11 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
-# Module-level variable for the active Gemini key (set at runtime per request)
+# Module-level variable for the active Gemini key/model (set at runtime per request)
 _active_gemini_key: str = ""
+_active_gemini_model: str = DEFAULT_GEMINI_MODEL
 
 
 class GeminiRateLimitError(Exception):
@@ -32,10 +33,15 @@ class GeminiRateLimitError(Exception):
         super().__init__(f"Gemini rate limit hit for key_id={key_id!r}")
 
 
-def set_active_gemini_key(api_key: str) -> None:
-    """Set the Gemini API key to use for the current request."""
-    global _active_gemini_key
+def _get_gemini_url(model: str = DEFAULT_GEMINI_MODEL) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> None:
+    """Set the Gemini API key and model to use for the current request."""
+    global _active_gemini_key, _active_gemini_model
     _active_gemini_key = api_key.strip() if api_key else ""
+    _active_gemini_model = model.strip() if model else DEFAULT_GEMINI_MODEL
 
 
 # ─────────────────────────────────────────
@@ -170,9 +176,10 @@ def _call_groq_sync(prompt: str) -> str:
 # ─────────────────────────────────────────
 # GEMINI CALL (httpx REST)
 # ─────────────────────────────────────────
-def _call_gemini_sync(prompt: str, key_id: Optional[str] = None) -> str:
+def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
     """REST call to Gemini using httpx. Raises GeminiRateLimitError on 429."""
     api_key = _active_gemini_key or GEMINI_API_KEY
+    model_name = (model or _active_gemini_model or DEFAULT_GEMINI_MODEL).strip()
     if not api_key:
         raise RuntimeError("No Gemini API key configured")
 
@@ -193,7 +200,7 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None) -> str:
 
     with httpx.Client(timeout=60) as client:
         resp = client.post(
-            f"{GEMINI_URL}?key={api_key}",
+            f"{_get_gemini_url(model_name)}?key={api_key}",
             json=payload,
             headers={"Content-Type": "application/json"},
         )
@@ -209,7 +216,7 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None) -> str:
     return candidates[0]["content"]["parts"][0]["text"]
 
 
-def _call_ai_sync(prompt: str, key_id: Optional[str] = None) -> str:
+def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
     """
     Try Gemini first (if any key is configured); fall back to Groq only if NO
     Gemini key is available at all.  GeminiRateLimitError is always re-raised
@@ -218,7 +225,7 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None) -> str:
     gemini_key = _active_gemini_key or GEMINI_API_KEY
     if gemini_key:
         # Gemini is configured — use it exclusively; re-raise rate-limit errors
-        return _call_gemini_sync(prompt, key_id=key_id)
+        return _call_gemini_sync(prompt, key_id=key_id, model=model)
     # No Gemini key configured at all — fall back to Groq
     return _call_groq_sync(prompt)
 
@@ -226,7 +233,7 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None) -> str:
 # ─────────────────────────────────────────
 # PUBLIC FUNCTIONS
 # ─────────────────────────────────────────
-async def generate_keywords(brand_name: str) -> dict:
+async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) -> dict:
     """
     Generate multi-strategy search keywords using Groq.
     Returns dict: {brand, affiliate, category, hinglish}
@@ -235,7 +242,10 @@ async def generate_keywords(brand_name: str) -> dict:
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
         loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_ai_sync, prompt)
+        raw_text = await loop.run_in_executor(
+            None,
+            functools.partial(_call_ai_sync, prompt, model=model),
+        )
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
         if isinstance(keywords, dict):
@@ -257,7 +267,7 @@ def _fallback_keywords(brand_name: str) -> dict:
     }
 
 
-async def analyze_candidates(messages_list: list, key_id: Optional[str] = None) -> list:
+async def analyze_candidates(messages_list: list, key_id: Optional[str] = None, model: str = DEFAULT_GEMINI_MODEL) -> list:
     """
     Analyze messages to find shortlistable affiliate candidates.
     Only includes users WITH a Telegram username (outreach-ready).
@@ -286,7 +296,10 @@ async def analyze_candidates(messages_list: list, key_id: Optional[str] = None) 
 
     loop = asyncio.get_event_loop()
     try:
-        raw_text = await loop.run_in_executor(None, functools.partial(_call_ai_sync, prompt, key_id=key_id))
+        raw_text = await loop.run_in_executor(
+            None,
+            functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model),
+        )
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
     except GeminiRateLimitError:

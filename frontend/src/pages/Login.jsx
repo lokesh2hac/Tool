@@ -199,7 +199,7 @@ export default function Login({ setAuth, showToast }) {
         </div>
 
         <p className="text-center text-gray-600 text-xs mt-6">
-          ACE2KING HR Platform · Powered by Gemini AI
+          ACE2KING HR Platform · Powered by Groq & Gemini AI
         </p>
       </div>
     </div>
