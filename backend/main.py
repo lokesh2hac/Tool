@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from routers import auth, groups, candidates, outreach
+from routers import auth, groups, candidates, outreach, api_keys
 
 load_dotenv()
 
@@ -46,6 +46,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(groups.router, prefix="/api/groups", tags=["groups"])
 app.include_router(candidates.router, prefix="/api/candidates", tags=["candidates"])
 app.include_router(outreach.router, prefix="/api/outreach", tags=["outreach"])
+app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
 
 
 @app.get("/api/health")

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
 import GroupCard from '../components/GroupCard'
+import ApiKeyModal from '../components/ApiKeyModal'
 
 export default function Dashboard({ showToast }) {
   const navigate = useNavigate()
@@ -12,6 +13,11 @@ export default function Dashboard({ showToast }) {
   const [analyzeProgress, setAnalyzeProgress] = useState([])
   const [analyzing, setAnalyzing] = useState(false)
   const [aiKeywords, setAiKeywords] = useState([]) // show user what AI searched
+
+  // Active Gemini key chosen by the user (from ApiKeyModal)
+  const [activeGeminiKey, setActiveGeminiKey] = useState(null) // { id, label }
+  // Rate-limit popup state
+  const [rateLimitState, setRateLimitState] = useState(null) // { groupIndex, rateLimitedKeyId, resolveKey }
 
   const handleSearch = async (e) => {
     e.preventDefault()
@@ -58,6 +64,34 @@ export default function Dashboard({ showToast }) {
     return !!selectedGroups.find(g => (g.group_username || g.group_title) === key)
   }
 
+  /**
+   * Show the key-picker modal and wait for the user to pick a key.
+   * Sets state to trigger the modal render, then returns a Promise that
+   * resolves to the selected key object { id, label } or null if cancelled.
+   */
+  const waitForKeySelection = (rateLimitedKeyId) => {
+    return new Promise((resolve) => {
+      setRateLimitState({ rateLimitedKeyId, resolveKey: resolve })
+    })
+  }
+
+  const handleKeySelected = async (key) => {
+    // Store the selected key id and resolve the pending Promise so analysis continues.
+    const selected = { id: key.id, label: key.label }
+    setActiveGeminiKey(selected)
+    if (rateLimitState?.resolveKey) {
+      rateLimitState.resolveKey(selected)
+    }
+    setRateLimitState(null)
+  }
+
+  const handleModalClose = () => {
+    if (rateLimitState?.resolveKey) {
+      rateLimitState.resolveKey(null)
+    }
+    setRateLimitState(null)
+  }
+
   const handleAnalyze = async () => {
     if (selectedGroups.length === 0) {
       showToast('Please select at least one group', 'error')
@@ -65,6 +99,9 @@ export default function Dashboard({ showToast }) {
     }
     setAnalyzing(true)
     setAnalyzeProgress(selectedGroups.map(g => ({ group: g, status: 'pending' })))
+
+    // Use whatever active key the user has selected (may be null = use env default)
+    let currentKeyId = activeGeminiKey?.id || null
 
     for (let i = 0; i < selectedGroups.length; i++) {
       const group = selectedGroups[i]
@@ -74,27 +111,51 @@ export default function Dashboard({ showToast }) {
         prev.map((p, idx) => idx === i ? { ...p, status: 'fetching' } : p)
       )
 
-      try {
-        const msgRes = await api.post('/api/groups/messages', { group_username: groupKey })
-        const messages = msgRes.data.messages || []
+      let retryWithNewKey = true
+      while (retryWithNewKey) {
+        retryWithNewKey = false
+        try {
+          const msgRes = await api.post('/api/groups/messages', { group_username: groupKey })
+          const messages = msgRes.data.messages || []
 
-        setAnalyzeProgress(prev =>
-          prev.map((p, idx) => idx === i ? { ...p, status: 'analyzing' } : p)
-        )
+          setAnalyzeProgress(prev =>
+            prev.map((p, idx) => idx === i ? { ...p, status: 'analyzing' } : p)
+          )
 
-        await api.post('/api/candidates/analyze', {
-          group_username: groupKey,
-          group_id: group.id || null,
-          messages,
-        })
+          await api.post('/api/candidates/analyze', {
+            group_username: groupKey,
+            group_id: group.id || null,
+            messages,
+            gemini_key_id: currentKeyId || undefined,
+          })
 
-        setAnalyzeProgress(prev =>
-          prev.map((p, idx) => idx === i ? { ...p, status: 'done' } : p)
-        )
-      } catch (err) {
-        setAnalyzeProgress(prev =>
-          prev.map((p, idx) => idx === i ? { ...p, status: 'error', error: err.response?.data?.detail } : p)
-        )
+          setAnalyzeProgress(prev =>
+            prev.map((p, idx) => idx === i ? { ...p, status: 'done' } : p)
+          )
+        } catch (err) {
+          if (err.response?.status === 429) {
+            const rateLimitedKeyId = err.response?.data?.detail?.key_id || currentKeyId
+            setAnalyzeProgress(prev =>
+              prev.map((p, idx) => idx === i ? { ...p, status: 'rate_limited' } : p)
+            )
+            // Show modal and wait for user to select a new key
+            const newKey = await waitForKeySelection(rateLimitedKeyId)
+            if (newKey) {
+              currentKeyId = newKey.id
+              setActiveGeminiKey(newKey)
+              retryWithNewKey = true // retry this group with the new key
+            } else {
+              // User cancelled
+              setAnalyzeProgress(prev =>
+                prev.map((p, idx) => idx === i ? { ...p, status: 'error', error: 'Cancelled (rate limit)' } : p)
+              )
+            }
+          } else {
+            setAnalyzeProgress(prev =>
+              prev.map((p, idx) => idx === i ? { ...p, status: 'error', error: err.response?.data?.detail } : p)
+            )
+          }
+        }
       }
     }
 
@@ -109,11 +170,21 @@ export default function Dashboard({ showToast }) {
     if (status === 'analyzing') return '🤖'
     if (status === 'done') return '✅'
     if (status === 'error') return '❌'
+    if (status === 'rate_limited') return '⚠️'
     return ''
   }
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
+      {/* Rate limit modal */}
+      {rateLimitState && (
+        <ApiKeyModal
+          rateLimitedKeyId={rateLimitState.rateLimitedKeyId}
+          onKeySelected={handleKeySelected}
+          onClose={handleModalClose}
+        />
+      )}
+
       {/* Search Section */}
       <div className="mb-10">
         <h1 className="text-2xl font-bold text-white mb-1">Find Affiliate Candidates</h1>
@@ -148,6 +219,16 @@ export default function Dashboard({ showToast }) {
                 {kw}
               </span>
             ))}
+          </div>
+        )}
+
+        {/* Active Gemini key indicator */}
+        {activeGeminiKey && (
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs text-green-400">🔑 Using key:</span>
+            <span className="text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-full">
+              {activeGeminiKey.label}
+            </span>
           </div>
         )}
       </div>
@@ -209,6 +290,7 @@ export default function Dashboard({ showToast }) {
                   {p.status === 'analyzing' && 'Gemini AI scoring candidates...'}
                   {p.status === 'done' && 'Done ✓'}
                   {p.status === 'pending' && 'Waiting...'}
+                  {p.status === 'rate_limited' && '⚠️ Rate limited — pick a new key...'}
                   {p.status === 'error' && `Error: ${p.error || 'Unknown error'}`}
                 </span>
               </div>
