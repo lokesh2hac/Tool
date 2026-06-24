@@ -14,7 +14,6 @@ if not GEMINI_API_KEY:
     sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
 
 # Direct REST API - no SDK, no OAuth issues
-# Correct model name: gemini-2.5-flash (official, no preview suffix)
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
@@ -110,31 +109,49 @@ def _call_gemini_sync(prompt: str) -> str:
 
 
 async def generate_keywords(brand_name: str) -> list:
-    """Generate iGaming Telegram search keywords for a brand."""
+    """
+    Generate 10 smart, India-focused Telegram search keywords.
+    Mix of English + Hinglish + brand-specific + category terms.
+    """
     prompt = (
-        f"Generate exactly 5 Telegram search keywords for finding iGaming affiliate marketing groups "
-        f"related to the brand or topic: '{brand_name}'. "
-        f"Focus on Indian affiliate marketing, betting promotions, and iGaming communities. "
-        f"Include India-specific keywords where relevant. "
-        f"Return ONLY a valid JSON array of strings, no explanation, no markdown. "
-        f'Example: ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]'
+        f"You are a Telegram group discovery expert for Indian iGaming market.\n"
+        f"Generate exactly 10 Telegram search keywords to find groups related to: '{brand_name}'.\n\n"
+        f"Rules:\n"
+        f"- Mix of: brand name variations, affiliate/promoter terms, India-specific terms\n"
+        f"- Include Hinglish terms (e.g. 'paise kamao', 'betting tips india')\n"
+        f"- Include cricket/IPL/fantasy sports terms if relevant\n"
+        f"- Include affiliate/promoter/agent/partner terms\n"
+        f"- Short 1-3 word phrases work best for Telegram search\n"
+        f"- NO duplicate meanings\n\n"
+        f"Return ONLY a valid JSON array of 10 strings, no explanation, no markdown.\n"
+        f'Example: ["keyword1", "keyword2", ..., "keyword10"]'
     )
     try:
         loop = asyncio.get_event_loop()
         raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
-        if isinstance(keywords, list):
-            return [str(k) for k in keywords[:5]]
-        return [brand_name]
+        if isinstance(keywords, list) and len(keywords) >= 3:
+            return [str(k) for k in keywords[:10]]
+        return _fallback_keywords(brand_name)
     except Exception:
-        return [
-            brand_name,
-            f"{brand_name} affiliate india",
-            f"{brand_name} promoter",
-            "igaming affiliate india",
-            "betting affiliate program india",
-        ]
+        return _fallback_keywords(brand_name)
+
+
+def _fallback_keywords(brand_name: str) -> list:
+    """Fallback keywords if Gemini fails."""
+    return [
+        brand_name,
+        f"{brand_name} affiliate",
+        f"{brand_name} agent india",
+        f"{brand_name} promoter",
+        "igaming affiliate india",
+        "betting affiliate program",
+        "cricket betting tips india",
+        "paise kamao online",
+        "fantasy sports affiliate",
+        "ipl betting group india",
+    ]
 
 
 async def analyze_candidates(messages_list: list) -> list:
