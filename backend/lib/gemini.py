@@ -2,14 +2,15 @@ import os
 import json
 import re
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-model = genai.GenerativeModel("gemini-1.5-flash")
+MODEL = "gemini-2.0-flash"
 
 CANDIDATE_ANALYSIS_PROMPT = """You are an HR assistant for ACE2KING, a leading iGaming and sports betting platform.
 We are recruiting AFFILIATE MARKETING AGENTS and WEBSITE PROMOTER AGENTS on a commission basis.
@@ -62,14 +63,16 @@ async def generate_keywords(brand_name: str) -> list:
         f'Example: ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]'
     )
     try:
-        response = await model.generate_content_async(prompt)
+        response = await client.aio.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+        )
         raw = _strip_markdown(response.text)
         keywords = json.loads(raw)
         if isinstance(keywords, list):
             return [str(k) for k in keywords[:5]]
         return [brand_name]
     except Exception:
-        # Fallback: return sensible defaults based on brand name
         return [
             brand_name,
             f"{brand_name} affiliate",
@@ -100,7 +103,10 @@ async def analyze_candidates(messages_list: list) -> list:
     prompt = CANDIDATE_ANALYSIS_PROMPT.format(messages=formatted)
 
     try:
-        response = await model.generate_content_async(prompt)
+        response = await client.aio.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+        )
         raw = _strip_markdown(response.text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):

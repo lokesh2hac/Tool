@@ -13,11 +13,16 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     sys.exit("ERROR: SECRET_KEY environment variable is not set. Set it in your .env file.")
 
+# ALLOWED_ORIGINS env var: comma-separated list of allowed origins
+# Set this in Render to: https://tool-1-j1kb.onrender.com
+# Default includes localhost for local dev
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:3000",
-    "https://tool-1-j1kb.onrender.com",
+    "http://localhost:5173,http://localhost:3000"
 ).split(",")
+
+# Strip whitespace from each origin
+ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
 
 app = FastAPI(title="ACE2KING Candidate Finder", version="1.0.0")
 
