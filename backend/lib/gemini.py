@@ -4,6 +4,8 @@ import json
 import re
 import asyncio
 import urllib.request
+import urllib.error
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -85,7 +87,6 @@ Mandatory requirements:
 
 Input format:
 Each line is: @username (Display Name): message text
-(e.g., @rahulverma (Rahul V): Use my code IND123 for 200% bonus on 1xBet)
 
 Return ONLY this exact JSON array - no markdown, no explanation:
 [
@@ -118,7 +119,7 @@ def _strip_markdown(text: str) -> str:
 
 
 # ─────────────────────────────────────────
-# GEMINI CALL
+# GEMINI CALL (urllib - Google doesn't block it)
 # ─────────────────────────────────────────
 def _call_gemini_sync(prompt: str) -> str:
     """Direct REST call to Gemini 2.5 Flash."""
@@ -147,17 +148,21 @@ def _call_gemini_sync(prompt: str) -> str:
 
 
 # ─────────────────────────────────────────
-# GROQ FALLBACK CALL
+# GROQ CALL (httpx - bypasses Cloudflare block)
+# urllib gets 403 from Groq's Cloudflare, httpx mimics curl properly
 # ─────────────────────────────────────────
 def _call_groq_sync(prompt: str) -> str:
-    """Fallback REST call to Groq (llama-3.3-70b-versatile). Free tier: 500k tokens/day."""
+    """
+    REST call to Groq using httpx (not urllib).
+    httpx sends proper headers that pass Cloudflare — urllib gets 403.
+    """
     if not GROQ_API_KEY:
         raise RuntimeError(
             "GROQ_API_KEY not set. Add it in Render environment variables. "
             "Get free key from https://console.groq.com/keys"
         )
 
-    payload = json.dumps({
+    payload = {
         "model": GROQ_MODEL,
         "messages": [
             {
@@ -172,25 +177,22 @@ def _call_groq_sync(prompt: str) -> str:
         "temperature": 0.2,
         "max_tokens": 4096,
         "stream": False,
-    }).encode("utf-8")
+    }
 
-    req = urllib.request.Request(
-        GROQ_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-        },
-        method="POST"
-    )
+    with httpx.Client(timeout=60) as client:
+        resp = client.post(
+            GROQ_URL,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            }
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Groq HTTP {resp.status_code}: {resp.text}")
+        result = resp.json()
 
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        return result["choices"][0]["message"]["content"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        raise RuntimeError(f"Groq HTTP {e.code}: {body}")
+    return result["choices"][0]["message"]["content"]
 
 
 # ─────────────────────────────────────────
@@ -199,20 +201,19 @@ def _call_groq_sync(prompt: str) -> str:
 def _call_ai_sync(prompt: str) -> str:
     """
     Try Gemini 2.5 Flash first.
-    On ANY failure (rate limit 429, 404, quota, etc.) → auto-switch to Groq llama-3.3-70b.
+    On ANY failure (rate limit 429, quota, etc.) → auto-switch to Groq llama-3.3-70b.
     Both fail → raise error.
     """
     try:
         return _call_gemini_sync(prompt)
     except RuntimeError as gemini_err:
-        # Auto-fallback to Groq on any Gemini error
         try:
             return _call_groq_sync(prompt)
         except RuntimeError as groq_err:
             raise RuntimeError(
                 f"Both AI providers failed.\n"
-                f"Gemini error: {gemini_err}\n"
-                f"Groq error: {groq_err}"
+                f"Gemini: {gemini_err}\n"
+                f"Groq: {groq_err}"
             )
 
 
