@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.contacts import SearchRequest
+from telethon.errors import SessionPasswordNeededError
 
 load_dotenv()
 
@@ -45,7 +46,9 @@ async def send_code(phone: str) -> str:
 
 async def sign_in(phone: str, code: str, phone_code_hash: str):
     """
-    Sign in with OTP. Returns (client, session_string, username).
+    Sign in with OTP.
+    Returns (client, session_string, username) on success.
+    Raises SessionPasswordNeededError if 2FA is enabled — caller must then call sign_in_2fa().
     """
     client = active_clients.get(phone)
     if client is None:
@@ -53,7 +56,27 @@ async def sign_in(phone: str, code: str, phone_code_hash: str):
         await client.connect()
         active_clients[phone] = client
 
+    # This raises SessionPasswordNeededError if 2FA is ON
     await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+
+    session_string = get_session_string(client)
+    me = await client.get_me()
+    username = me.username or ""
+    return client, session_string, username
+
+
+async def sign_in_2fa(phone: str, password: str):
+    """
+    Complete 2FA login with the user's cloud password.
+    Call this after sign_in() raises SessionPasswordNeededError.
+    Returns (client, session_string, username).
+    """
+    client = active_clients.get(phone)
+    if client is None:
+        raise RuntimeError("No active session found. Please restart login.")
+
+    await client.sign_in(password=password)
+
     session_string = get_session_string(client)
     me = await client.get_me()
     username = me.username or ""
@@ -92,7 +115,7 @@ async def search_groups(client: TelegramClient, keyword: str, limit: int = 20) -
 
 
 async def get_messages(client: TelegramClient, group_username: str, limit: int = 100) -> dict:
-    """Fetch last `limit` messages from a group. Returns dict with messages list and group_title."""
+    """Fetch last `limit` messages from a group."""
     try:
         entity = await client.get_entity(group_username)
         group_title = getattr(entity, "title", group_username)
