@@ -35,6 +35,7 @@ class GeminiRateLimitError(Exception):
 
 
 class GeminiUnavailableError(Exception):
+    """Raised when Gemini returns 503 after retries."""
     pass
 
 
@@ -49,7 +50,7 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS
+# PROMPTS (improved with escaping instructions)
 # -------------------------------------------------------------------
 KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
@@ -77,8 +78,10 @@ Rules:
 - No duplicates across categories.
 - Mix English and Hinglish.
 - All keywords must be short (1–4 words) for effective Telegram search.
-- Focus heavily on India.
-- Return ONLY this JSON format:
+- Focus heavily on India (Indian users, Indian payment methods, cricket/ipl context).
+- The keywords should be optimised for finding GROUPS (i.e., they will be used in Telegram search for groups).
+
+Return ONLY this exact JSON format – no markdown, no explanation:
 {{
   "keywords": [
     "keyword1",
@@ -87,52 +90,63 @@ Rules:
     "keyword50+"
   ]
 }}
+
+The list must contain at least 50 unique keywords.
 """
 
 
 CANDIDATE_ANALYSIS_PROMPT = """You are a talent scout for **{brand_name}** – a leading Indian gaming/betting platform. We are hiring **affiliate agents and website promoters** on a **commission‑based** model.
 
-Analyze the given Telegram **group** messages and identify users actively promoting betting/gaming platforms.
+Your task: Analyze the given Telegram **group** messages and **identify users who are actively promoting betting/gaming platforms** and could be recruited as our agents.
 
-Strong signals:
-- Shares referral codes/links
-- Direct recruitment language ("join me", "use my code", "earn with me", "commission")
-- Mentions earning, UPI, Paytm, GPay
-- Runs a channel/group with tips
-- Uses Hinglish, references IPL/cricket
+---
 
-Scoring (0-10):
-- 9-10: Unambiguous promoter with referral link, active username, Indian
-- 7-8: Strong promoter, recruitment language, audience likely
-- 6: Promising but weaker evidence
-Only score >= 6.
+**What we are looking for** (strong signals, score high):
 
-Mandatory: username must start with @ – otherwise skip.
+1. **Referral links/codes** – They share their own referral code/link for any betting site (e.g., 1xBet, Betway, Parimatch, Dafabet, etc.). This proves they already know how to recruit.
+2. **Direct recruitment language** – "Join me", "Use my code", "Earn with me", "Become a sub‑agent", "Commission for every player", "Free tips with my link".
+3. **Monetization** – They mention earning money, passive income, daily payouts, UPI payments (Paytm, GPay, PhonePe).
+4. **Audience building** – They run a channel/group, give predictions, betting tips, and ask people to DM or join.
+5. **Indian context** – They use Hinglish, reference IPL, cricket, Indian cities, and Indian payment methods.
 
-Input format:
+**Scoring guidelines (0–10)** – only consider users with score ≥ 6:
+
+- **9‑10**: Unambiguous promoter – shares own referral code/link, encourages sign‑ups, has an active Telegram username (@handle), clearly Indian, and shows evidence of existing recruitment.
+- **7‑8**: Strong promoter – uses recruitment language, has a channel/group, but referral link not visible in the sample; likely has an audience.
+- **6**: Promising – mentions earning, joining, or tips, but evidence is weaker.
+
+**Mandatory filters (automatic rejection)**:
+- No Telegram username (starts with @) → skip (we need to DM them).
+- Bots, spam accounts, or users who only ask questions → skip.
+- Personal bettors who do not recruit → skip.
+
+**Input format** (each line):
 @username (Display Name): message text
 
-Output: JSON array of candidates (max 15), sorted by score descending.
-Each object:
+**Output**: Return ONLY a JSON array of candidate objects, sorted by **score descending**, with a maximum of **15 results**. Each object:
+
 {{
   "username": "@handle",
   "display_name": "Name",
   "score": 8,
-  "reason": "short reason",
-  "sample_message": "exact message (escape quotes and newlines)",
+  "reason": "Concise reason why this person is a strong affiliate/promoter (mention referral code, recruitment language, etc.)",
+  "sample_message": "exact message text that proves it (escape double quotes with \\\" and newlines with \\n)",
   "is_indian_likely": true/false,
-  "existing_platform": "platform name if mentioned"
+  "existing_platform": "If they mention a specific platform (e.g., 1xBet, Betway) – useful for competitive recruitment"
 }}
 
-Return only the JSON array.
+**Extra requirements**:
+- Deduplicate by username – keep highest score.
+- Indian candidates should be prioritised (sort: Indian‑first, then score high‑to‑low).
+- If none qualify, return empty array [].
 
-Messages:
+**Here are the messages**:
 {messages}
 """
 
 
 # -------------------------------------------------------------------
-# JSON EXTRACTION
+# JSON EXTRACTION & PARSING HELPERS
 # -------------------------------------------------------------------
 def _strip_markdown(text: str) -> str:
     text = text.strip()
@@ -142,18 +156,28 @@ def _strip_markdown(text: str) -> str:
 
 
 def _extract_json(text: str) -> Any:
+    """
+    Attempt to extract a JSON object or array from the AI response.
+    Tries direct parse, then regex extraction with bracket balancing,
+    and fixes trailing commas.
+    """
     text = _strip_markdown(text)
+    
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+    
+    # Find first opening brace/bracket
     start = None
     for i, ch in enumerate(text):
         if ch in '{[':
             start = i
             break
     if start is None:
-        raise ValueError("No JSON structure found")
+        raise ValueError("No JSON structure found in AI response")
+    
+    # Balance brackets
     stack = []
     end = None
     for i in range(start, len(text)):
@@ -170,70 +194,113 @@ def _extract_json(text: str) -> Any:
                 end = i + 1
                 break
     if end is None:
-        raise ValueError("Unbalanced JSON")
-    candidate = text[start:end]
-    candidate = re.sub(r',\s*([}\]])', r'\1', candidate)
-    return json.loads(candidate)
+        raise ValueError("Unbalanced JSON structure")
+    
+    json_candidate = text[start:end]
+    # Remove trailing commas before } or ]
+    json_candidate = re.sub(r',\s*([}\]])', r'\1', json_candidate)
+    
+    try:
+        return json.loads(json_candidate)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON even after extraction: {e}")
 
 
 # -------------------------------------------------------------------
-# AI CALLS with retry/fallback
+# AI CALLS (httpx based) with retries for 503
 # -------------------------------------------------------------------
 def _call_groq_sync(prompt: str) -> str:
     payload = {
         "model": GROQ_MODEL,
         "messages": [
-            {"role": "system", "content": "You are an AI that returns valid JSON only. Escape all double quotes and newlines in strings."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text. Ensure all strings are properly escaped for JSON (escape double quotes and newlines)."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ],
         "temperature": 0.2,
         "max_tokens": 4096,
+        "stream": False,
     }
     with httpx.Client(timeout=60) as client:
-        resp = client.post(GROQ_URL, json=payload, headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"})
+        resp = client.post(
+            GROQ_URL,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            }
+        )
         if resp.status_code != 200:
             raise RuntimeError(f"Groq HTTP {resp.status_code}: {resp.text}")
-        return resp.json()["choices"][0]["message"]["content"]
+        result = resp.json()
+    return result["choices"][0]["message"]["content"]
 
 
 def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
     api_key = _active_gemini_key or GEMINI_API_KEY
     model_name = (model or _active_gemini_model or DEFAULT_GEMINI_MODEL).strip()
     if not api_key:
-        raise RuntimeError("No Gemini API key")
+        raise RuntimeError("No Gemini API key configured")
+
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096},
-        "systemInstruction": {"parts": [{"text": "You are an AI that returns valid JSON only. Escape all double quotes and newlines in strings."}]}
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 4096,
+        },
+        "systemInstruction": {
+            "parts": [{"text": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text. Ensure all strings are properly escaped for JSON (escape double quotes and newlines)."}]
+        }
     }
+
     url = f"{_get_gemini_url(model_name)}?key={api_key}"
-    for attempt in range(3):
+    max_retries = 3
+    for attempt in range(max_retries):
         with httpx.Client(timeout=60) as client:
             resp = client.post(url, json=payload, headers={"Content-Type": "application/json"})
             if resp.status_code == 429:
                 raise GeminiRateLimitError(key_id=key_id)
             if resp.status_code == 503:
-                if attempt < 2:
-                    time.sleep(2 ** attempt)
+                if attempt < max_retries - 1:
+                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    time.sleep(wait)
                     continue
                 else:
-                    raise GeminiUnavailableError("Gemini unavailable after retries")
+                    raise GeminiUnavailableError("Gemini service unavailable after retries")
             if resp.status_code != 200:
                 raise RuntimeError(f"Gemini HTTP {resp.status_code}: {resp.text}")
-            candidates = resp.json().get("candidates", [])
+            result = resp.json()
+            candidates = result.get("candidates", [])
             if not candidates:
-                raise RuntimeError("No candidates")
+                raise RuntimeError("Gemini returned no candidates in response")
             return candidates[0]["content"]["parts"][0]["text"]
-    raise GeminiUnavailableError("Gemini unavailable")
+    # Should never reach here
+    raise GeminiUnavailableError("Gemini service unavailable")
 
 
 def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
+    """
+    Try Gemini first; on 503 (overloaded) fallback to Groq.
+    RateLimit errors (429) are re-raised for key rotation.
+    """
     gemini_key = _active_gemini_key or GEMINI_API_KEY
     if gemini_key:
         try:
             return _call_gemini_sync(prompt, key_id=key_id, model=model)
         except GeminiUnavailableError:
-            pass  # fallback to Groq
+            # Fallback to Groq when Gemini is temporarily overloaded
+            return _call_groq_sync(prompt)
+        # GeminiRateLimitError is deliberately re-raised
+    # No Gemini key or fallback triggered
     return _call_groq_sync(prompt)
 
 
@@ -241,20 +308,61 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str
 # PUBLIC FUNCTIONS
 # -------------------------------------------------------------------
 def _fallback_keywords(brand_name: str) -> List[str]:
+    """Return at least 50 fallback keywords."""
     base = [
-        brand_name, f"{brand_name} india", f"{brand_name} official", f"{brand_name} club",
-        f"{brand_name} community", f"{brand_name} referral", f"{brand_name} promo",
-        f"{brand_name} bonus", f"{brand_name} agent", f"{brand_name} affiliate",
-        f"{brand_name} partner", f"{brand_name} earning", f"{brand_name} cricket",
-        f"{brand_name} betting", "affiliate india", "betting affiliate", "igaming promoter",
-        "referral code", "commission agent", "earn money online", "passive income",
-        "work from home", "betting tips", "cricket betting", "fantasy sports",
-        "satta matka", "matka tips", "online casino", "slot games", "jackpot",
-        "predictions", "tipster", "betting exchange", "odds", "ipl betting",
-        "dream11", "my11circle", "paytm first", "gpay betting", "phonepe betting",
-        "upi payment", "paise kamao", "satta tips", "lagao", "jeet", "adda",
-        "kamai online", "betting id", "join now", "refer and earn", "partner program",
-        "recruiting agents", "become a promoter"
+        brand_name,
+        f"{brand_name} india",
+        f"{brand_name} official",
+        f"{brand_name} club",
+        f"{brand_name} community",
+        f"{brand_name} referral",
+        f"{brand_name} promo",
+        f"{brand_name} bonus",
+        f"{brand_name} agent",
+        f"{brand_name} affiliate",
+        f"{brand_name} partner",
+        f"{brand_name} earning",
+        f"{brand_name} cricket",
+        f"{brand_name} betting",
+        "affiliate india",
+        "betting affiliate",
+        "igaming promoter",
+        "referral code",
+        "commission agent",
+        "earn money online",
+        "passive income",
+        "work from home",
+        "betting tips",
+        "cricket betting",
+        "fantasy sports",
+        "satta matka",
+        "matka tips",
+        "online casino",
+        "slot games",
+        "jackpot",
+        "predictions",
+        "tipster",
+        "betting exchange",
+        "odds",
+        "ipl betting",
+        "dream11",
+        "my11circle",
+        "paytm first",
+        "gpay betting",
+        "phonepe betting",
+        "upi payment",
+        "paise kamao",
+        "satta tips",
+        "lagao",
+        "jeet",
+        "adda",
+        "kamai online",
+        "betting id",
+        "join now",
+        "refer and earn",
+        "partner program",
+        "recruiting agents",
+        "become a promoter"
     ]
     unique = list(dict.fromkeys(base))
     while len(unique) < 50:
@@ -263,42 +371,55 @@ def _fallback_keywords(brand_name: str) -> List[str]:
 
 
 async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) -> List[str]:
+    """
+    Generate at least 50 search keywords as a flat list.
+    Falls back to hardcoded list if AI fails.
+    """
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
         loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, functools.partial(_call_ai_sync, prompt, model=model))
-        data = _extract_json(raw)
+        raw_text = await loop.run_in_executor(
+            None,
+            functools.partial(_call_ai_sync, prompt, model=model),
+        )
+        data = _extract_json(raw_text)
         if isinstance(data, dict) and "keywords" in data:
-            kw = data["keywords"]
-            if isinstance(kw, list) and len(kw) >= 20:
-                while len(kw) < 50:
-                    kw.append(f"{brand_name}search{len(kw)}")
-                return kw[:50]
+            keywords = data["keywords"]
+            if isinstance(keywords, list) and len(keywords) >= 20:
+                while len(keywords) < 50:
+                    keywords.append(f"{brand_name}search{len(keywords)}")
+                return keywords[:50]
         return _fallback_keywords(brand_name)
     except GeminiRateLimitError:
-        raise
+        raise  # let caller handle key rotation
     except Exception:
         return _fallback_keywords(brand_name)
 
 
+# -------------------------------------------------------------------
+# CHUNKED ANALYZE CANDIDATES (updated with chunk system)
+# -------------------------------------------------------------------
 async def analyze_candidates(
     messages_list: List[Dict[str, Any]],
     brand_name: Optional[str] = None,
     key_id: Optional[str] = None,
     model: str = DEFAULT_GEMINI_MODEL,
-    chunk_size: int = 50  # 👈 new parameter
+    chunk_size: int = 50,  # 👈 new parameter
 ) -> List[Dict[str, Any]]:
     """
-    Analyze messages in chunks to avoid overload and token limits.
-    Merges and deduplicates results from all chunks.
+    Analyze messages in chunks to avoid token limits and overload.
+    Returns deduplicated, sorted list of candidates (max 15).
     """
     if not messages_list:
         return []
 
     display_brand = brand_name if brand_name else "the gaming platform"
+    all_candidates = []
 
-    # Helper to analyze a single chunk
-    async def analyze_chunk(chunk: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Process messages in chunks
+    for i in range(0, len(messages_list), chunk_size):
+        chunk = messages_list[i:i+chunk_size]
+
         formatted_lines = []
         for m in chunk:
             if not m.get("text"):
@@ -308,31 +429,35 @@ async def analyze_candidates(
             name = m.get("sender_name", "Unknown")
             msg = m["text"].replace('"', '\\"').replace('\n', '\\n')
             formatted_lines.append(f"{sender} ({name}): {msg}")
+
         if not formatted_lines:
-            return []
+            continue
+
         formatted = "\n".join(formatted_lines)
         prompt = CANDIDATE_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
+
         loop = asyncio.get_event_loop()
         try:
-            raw = await loop.run_in_executor(None, functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model))
-            candidates = _extract_json(raw)
+            raw_text = await loop.run_in_executor(
+                None,
+                functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model),
+            )
+            candidates = _extract_json(raw_text)
             if isinstance(candidates, list):
-                # Filter out entries without proper username
-                return [c for c in candidates if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")]
-            return []
+                # Filter out invalid usernames
+                filtered = [
+                    c for c in candidates
+                    if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
+                ]
+                all_candidates.extend(filtered)
+        except GeminiRateLimitError:
+            raise  # let caller handle rate limits
         except Exception as e:
-            # Log but don't fail the whole batch
+            # Log error and continue with next chunk
             print(f"Chunk analysis failed: {e}")
-            return []
+            continue
 
-    # Split into chunks
-    all_candidates = []
-    for i in range(0, len(messages_list), chunk_size):
-        chunk = messages_list[i:i+chunk_size]
-        chunk_results = await analyze_chunk(chunk)
-        all_candidates.extend(chunk_results)
-
-    # Deduplicate by username, keep highest score
+    # Deduplicate by username (keep highest score)
     unique = {}
     for c in all_candidates:
         username = c.get("username", "").strip()
@@ -342,6 +467,10 @@ async def analyze_candidates(
             unique[username] = c
 
     final = list(unique.values())
-    # Sort: Indian first, then score desc
-    final.sort(key=lambda x: (0 if x.get("is_indian_likely") else 1, -int(x.get("score", 0))))
+    final.sort(
+        key=lambda x: (
+            0 if x.get("is_indian_likely") else 1,
+            -int(x.get("score", 0))
+        )
+    )
     return final[:15]  # max 15 results
