@@ -11,18 +11,17 @@ load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
-    sys.exit("ERROR: SECRET_KEY environment variable is not set. Set it in your .env file.")
+    sys.exit("ERROR: SECRET_KEY environment variable is not set.")
 
-# ALLOWED_ORIGINS env var: comma-separated list of allowed origins
-# Set this in Render to: https://tool-1-j1kb.onrender.com
-# Default includes localhost for local dev
+# ALLOWED_ORIGINS: comma-separated list
+# Set in Render env vars: https://your-frontend.onrender.com
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://localhost:3000"
 ).split(",")
+ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
 
-# Strip whitespace from each origin
-ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
+IS_PRODUCTION = os.getenv("RENDER", "") != ""  # Render sets RENDER=true automatically
 
 app = FastAPI(title="ACE2KING Candidate Finder", version="1.0.0")
 
@@ -39,8 +38,8 @@ app.add_middleware(
     secret_key=SECRET_KEY,
     session_cookie="ace2king_session",
     max_age=86400 * 7,
-    same_site="lax",
-    https_only=False,
+    same_site="none" if IS_PRODUCTION else "lax",
+    https_only=IS_PRODUCTION,
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
@@ -51,4 +50,4 @@ app.include_router(outreach.router, prefix="/api/outreach", tags=["outreach"])
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "ACE2KING Candidate Finder"}
+    return {"status": "ok", "service": "ACE2KING Candidate Finder", "production": IS_PRODUCTION}

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
-from lib.telegram_client import send_code, sign_in, active_clients, create_client, get_session_string
+from lib.telegram_client import send_code, sign_in, active_clients
 from lib.supabase_client import supabase
 
 router = APIRouter()
@@ -13,31 +13,57 @@ class SendCodeRequest(BaseModel):
 class VerifyCodeRequest(BaseModel):
     phone: str
     code: str
+    phone_code_hash: str  # sent back from frontend (returned by /send-code)
 
 
 @router.post("/send-code")
 async def api_send_code(body: SendCodeRequest, request: Request):
+    """
+    Step 1: Send OTP to phone number.
+    Returns phone_code_hash to frontend — frontend must send it back in /verify-code.
+    This avoids relying on cross-origin session cookies.
+    """
+    if not body.phone or len(body.phone) < 7:
+        raise HTTPException(status_code=400, detail="Invalid phone number.")
     try:
         phone_code_hash = await send_code(body.phone)
-        request.session["phone_code_hash"] = phone_code_hash
-        request.session["pending_phone"] = body.phone
-        return {"success": True}
+        # Return hash to frontend — frontend stores it temporarily and sends back
+        return {"success": True, "phone_code_hash": phone_code_hash}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/verify-code")
 async def api_verify_code(body: VerifyCodeRequest, request: Request):
-    phone_code_hash = request.session.get("phone_code_hash")
-    if not phone_code_hash:
-        raise HTTPException(status_code=400, detail="No pending OTP request. Please send code first.")
+    """
+    Step 2: Verify OTP using phone_code_hash returned from /send-code.
+    Real Telegram verification — will fail with wrong phone or wrong OTP.
+    """
+    if not body.phone_code_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="phone_code_hash is required. Call /send-code first."
+        )
+    if not body.code or len(body.code) < 4:
+        raise HTTPException(status_code=400, detail="Invalid OTP code.")
 
     try:
         client, session_string, username = await sign_in(
-            body.phone, body.code, phone_code_hash
+            body.phone, body.code, body.phone_code_hash
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        # Give user-friendly error messages
+        if "PHONE_CODE_INVALID" in error_msg:
+            raise HTTPException(status_code=400, detail="Invalid OTP code. Please try again.")
+        elif "PHONE_CODE_EXPIRED" in error_msg:
+            raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+        elif "PHONE_NUMBER_INVALID" in error_msg:
+            raise HTTPException(status_code=400, detail="Invalid phone number.")
+        elif "SESSION_PASSWORD_NEEDED" in error_msg:
+            raise HTTPException(status_code=400, detail="Two-step verification is enabled on this account. Please disable it temporarily.")
+        else:
+            raise HTTPException(status_code=400, detail=f"Login failed: {error_msg}")
 
     # Save session to Supabase
     try:
@@ -56,11 +82,9 @@ async def api_verify_code(body: VerifyCodeRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save session: {str(e)}")
 
+    # Set server-side session
     request.session["phone"] = body.phone
-    request.session.pop("phone_code_hash", None)
-    request.session.pop("pending_phone", None)
-
-    return {"success": True, "username": username}
+    return {"success": True, "username": username or body.phone}
 
 
 @router.get("/status")
