@@ -14,10 +14,10 @@ if not GEMINI_API_KEY:
     sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
 
 # Direct REST API - no SDK, no OAuth issues
-# Using stable gemini-1.5-flash (NOT preview - preview causes 404)
+# Correct model name: gemini-2.5-flash (official, no preview suffix)
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 )
 
 CANDIDATE_ANALYSIS_PROMPT = """You are an expert talent scout for ACE2KING, a leading iGaming and sports betting platform targeting INDIA.
@@ -100,10 +100,13 @@ def _call_gemini_sync(prompt: str) -> str:
         method="POST"
     )
 
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-
-    return result["candidates"][0]["content"]["parts"][0]["text"]
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        return result["candidates"][0]["content"]["parts"][0]["text"]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8")
+        raise RuntimeError(f"Gemini HTTP {e.code}: {body}")
 
 
 async def generate_keywords(brand_name: str) -> list:
@@ -158,7 +161,7 @@ async def analyze_candidates(messages_list: list) -> list:
         raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
-        if isinstance(candidates, list):\
+        if isinstance(candidates, list):
             # Indian users first, then by score
             candidates.sort(
                 key=lambda x: (
