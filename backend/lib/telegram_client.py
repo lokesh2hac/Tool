@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.contacts import SearchRequest
+from telethon.tl.types import Chat, Channel
 from telethon.errors import SessionPasswordNeededError
 
 load_dotenv()
@@ -48,7 +49,7 @@ async def sign_in(phone: str, code: str, phone_code_hash: str):
     """
     Sign in with OTP.
     Returns (client, session_string, username) on success.
-    Raises SessionPasswordNeededError if 2FA is enabled — caller must then call sign_in_2fa().
+    Raises SessionPasswordNeededError if 2FA is enabled.
     """
     client = active_clients.get(phone)
     if client is None:
@@ -56,7 +57,6 @@ async def sign_in(phone: str, code: str, phone_code_hash: str):
         await client.connect()
         active_clients[phone] = client
 
-    # This raises SessionPasswordNeededError if 2FA is ON
     await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
 
     session_string = get_session_string(client)
@@ -68,7 +68,6 @@ async def sign_in(phone: str, code: str, phone_code_hash: str):
 async def sign_in_2fa(phone: str, password: str):
     """
     Complete 2FA login with the user's cloud password.
-    Call this after sign_in() raises SessionPasswordNeededError.
     Returns (client, session_string, username).
     """
     client = active_clients.get(phone)
@@ -95,20 +94,47 @@ async def get_client_for_phone(phone: str, session_string: str) -> TelegramClien
     return client
 
 
-async def search_groups(client: TelegramClient, keyword: str, limit: int = 20) -> list:
-    """Search for Telegram groups by keyword. Returns list of group dicts."""
+async def search_groups(client: TelegramClient, keyword: str, limit: int = 50) -> list:
+    """
+    Search for Telegram groups by keyword.
+    - Uses limit=50 for more results
+    - Includes both groups (Chat) and channels (Channel)
+    - Extracts member count smartly
+    - Skips bots and users
+    """
     try:
         result = await client(SearchRequest(q=keyword, limit=limit))
         groups = []
         for chat in result.chats:
-            chat_dict = {
-                "group_title": getattr(chat, "title", ""),
-                "group_username": getattr(chat, "username", "") or "",
-                "member_count": getattr(chat, "participants_count", 0) or 0,
+            # Only include groups and channels, skip users/bots
+            if not isinstance(chat, (Chat, Channel)):
+                continue
+
+            title = getattr(chat, "title", "") or ""
+            if not title:
+                continue
+
+            username = getattr(chat, "username", "") or ""
+
+            # Get member count - different field for Chat vs Channel
+            member_count = 0
+            if isinstance(chat, Channel):
+                member_count = getattr(chat, "participants_count", 0) or 0
+            elif isinstance(chat, Chat):
+                member_count = getattr(chat, "participants_count", 0) or 0
+
+            # Skip clearly irrelevant tiny groups (< 50 members unless no count)
+            if member_count and member_count < 50:
+                continue
+
+            groups.append({
+                "group_title": title,
+                "group_username": username,
+                "member_count": member_count,
                 "description": "",
-            }
-            if chat_dict["group_title"]:
-                groups.append(chat_dict)
+                "is_channel": isinstance(chat, Channel),
+            })
+
         return groups
     except Exception as e:
         raise RuntimeError(f"Group search failed: {str(e)}")
