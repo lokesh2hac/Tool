@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+telethon
+google-generativeai
+supabase
+python-dotenv
+python-multipart
+starlette
+itsdangerous
+pydantic
+httpx
