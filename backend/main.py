@@ -16,6 +16,7 @@ if not SECRET_KEY:
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://localhost:3000",
+    "https://tool-1-j1kb.onrender.com",
 ).split(",")
 
 app = FastAPI(title="ACE2KING Candidate Finder", version="1.0.0")
