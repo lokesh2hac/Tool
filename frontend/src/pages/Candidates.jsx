@@ -37,7 +37,7 @@ export default function Candidates({ showToast }) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">🎯 Candidates</h1>
-          <p className="text-gray-400 text-sm mt-1">{filtered.length} potential affiliate agents found by Gemini AI</p>
+          <p className="text-gray-400 text-sm mt-1">{filtered.length} potential affiliate agents found by AI</p>
         </div>
         <div className="flex items-center gap-3">
           <label className="text-sm text-gray-400">Min Score:</label>

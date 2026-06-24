@@ -1,0 +1,134 @@
+import { useEffect, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import api from '../api'
+import { DEFAULT_MODEL, MODEL_OPTIONS, getStoredModel, setStoredModel } from '../modelConfig'
+
+export default function TopBar({ auth, setAuth, showToast }) {
+  const navigate = useNavigate()
+  const menuRef = useRef(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [showModels, setShowModels] = useState(false)
+  const [selectedModel, setSelectedModel] = useState(getStoredModel)
+
+  useEffect(() => {
+    setStoredModel(selectedModel || DEFAULT_MODEL)
+  }, [selectedModel])
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setMenuOpen(false)
+        setShowModels(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleLogout = async () => {
+    try {
+      await api.post('/api/auth/logout', {})
+      setAuth({ logged_in: false })
+      setMenuOpen(false)
+      setShowModels(false)
+      navigate('/')
+      showToast('Logged out successfully', 'success')
+    } catch {
+      showToast('Logout failed', 'error')
+    }
+  }
+
+  const handleModelChange = (model) => {
+    setSelectedModel(model)
+  }
+
+  return (
+    <div className="sticky top-0 z-50 border-b border-gray-800 bg-[#0a0e1a]">
+      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <Link to="/dashboard" className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 to-yellow-400 flex items-center justify-center">
+            <span className="text-gray-900 font-black text-sm">A2K</span>
+          </div>
+          <span className="text-white font-bold text-lg">ACE2KING</span>
+        </Link>
+
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(open => !open)
+              setShowModels(false)
+            }}
+            className="w-10 h-10 rounded-xl border border-gray-700 bg-[#1a2035] text-gray-300 hover:text-white transition-colors duration-150"
+            aria-label="Open settings"
+          >
+            ⋮
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-72 rounded-xl border border-gray-700 bg-[#1a2035] shadow-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => {
+                  navigate('/api-keys')
+                  setMenuOpen(false)
+                  setShowModels(false)
+                }}
+                className="w-full px-4 py-3 text-left text-sm text-gray-200 hover:bg-white/5 transition-colors duration-150"
+              >
+                🔑 API Keys
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowModels(value => !value)}
+                className="w-full px-4 py-3 text-left text-sm text-gray-200 hover:bg-white/5 transition-colors duration-150 flex items-center justify-between"
+              >
+                <span>🤖 Change Model</span>
+                <span className="text-gray-500">{showModels ? '−' : '+'}</span>
+              </button>
+
+              {showModels && (
+                <div className="px-4 pb-4">
+                  <div className="rounded-xl border border-gray-700 bg-[#0f1420] p-3">
+                    <p className="text-xs font-medium text-gray-400 mb-3">AI Model:</p>
+                    <div className="space-y-2">
+                      {MODEL_OPTIONS.map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => handleModelChange(option.value)}
+                          className="w-full text-left text-sm text-gray-200 hover:text-white transition-colors duration-150"
+                        >
+                          <span className={selectedModel === option.value ? 'text-amber-400' : 'text-gray-400'}>
+                            {selectedModel === option.value ? '●' : '○'}
+                          </span>{' '}
+                          {option.label}
+                          {option.note && <span className="text-gray-500"> ({option.note})</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-gray-700 px-4 py-3 text-sm text-gray-500">
+                <p>{auth.username ? `@${auth.username}` : '@username'}</p>
+                <p>{auth.phone || 'No phone'}</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-red-500/10 transition-colors duration-150"
+              >
+                🚪 Logout
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

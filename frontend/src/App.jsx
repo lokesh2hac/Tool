@@ -6,7 +6,8 @@ import Dashboard from './pages/Dashboard'
 import Candidates from './pages/Candidates'
 import Outreach from './pages/Outreach'
 import ApiKeys from './pages/ApiKeys'
-import Navbar from './components/Navbar'
+import TopBar from './components/TopBar'
+import BottomNav from './components/BottomNav'
 import Toast from './components/Toast'
 
 export default function App() {
@@ -37,32 +38,39 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      {auth.logged_in && <Navbar auth={auth} setAuth={setAuth} showToast={showToast} />}
+      {auth.logged_in && <TopBar auth={auth} setAuth={setAuth} showToast={showToast} />}
       {toast && <Toast message={toast.message} type={toast.type} />}
-      <Routes>
-        <Route
-          path="/"
-          element={auth.logged_in ? <Navigate to="/dashboard" replace /> : <Login setAuth={setAuth} showToast={showToast} />}
-        />
-        <Route
-          path="/dashboard"
-          element={auth.logged_in ? <Dashboard showToast={showToast} /> : <Navigate to="/" replace />}
-        />
-        <Route
-          path="/candidates"
-          element={auth.logged_in ? <Candidates showToast={showToast} /> : <Navigate to="/" replace />}
-        />
-        <Route
-          path="/outreach"
-          element={auth.logged_in ? <Outreach /> : <Navigate to="/" replace />}
-        />
-        <Route
-          path="/api-keys"
-          element={auth.logged_in ? <ApiKeys showToast={showToast} /> : <Navigate to="/" replace />}
-        />
-        {/* Catch-all — redirect unknown paths to home */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <div className={auth.logged_in ? 'pb-20' : ''}>
+        <Routes>
+          <Route
+            path="/"
+            element={auth.logged_in ? <Navigate to="/dashboard" replace /> : <Login setAuth={setAuth} showToast={showToast} />}
+          />
+          <Route
+            path="/dashboard"
+            element={auth.logged_in ? <Dashboard showToast={showToast} /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/candidates"
+            element={auth.logged_in ? <Candidates showToast={showToast} /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/outreach"
+            element={auth.logged_in ? <Outreach /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/outreach-history"
+            element={auth.logged_in ? <Outreach /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/api-keys"
+            element={auth.logged_in ? <ApiKeys showToast={showToast} /> : <Navigate to="/" replace />}
+          />
+          {/* Catch-all — redirect unknown paths to home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+      {auth.logged_in && <BottomNav />}
     </BrowserRouter>
   )
 }

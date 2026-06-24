@@ -1,6 +1,6 @@
 # ACE2KING — Telegram Affiliate Candidate Finder
 
-A full-stack HR tool for finding and recruiting affiliate marketing agents and website promoters from Telegram public groups, powered by Google Gemini AI.
+A full-stack HR tool for finding and recruiting affiliate marketing agents and website promoters from Telegram public groups, powered by AI with Gemini and Groq support.
 
 ---
 
@@ -17,7 +17,7 @@ A full-stack HR tool for finding and recruiting affiliate marketing agents and w
                          │ HTTP /api/*
          ┌───────────────┼──────────────────┐
          ▼               ▼                  ▼
-   Telegram API    Gemini AI 1.5      Supabase DB
+   Telegram API   Gemini/Groq AI      Supabase DB
    (Telethon       (Keyword           (Sessions,
    MTProto)        Expansion &        Candidates,
                    Candidate          Outreach Logs)
@@ -25,7 +25,7 @@ A full-stack HR tool for finding and recruiting affiliate marketing agents and w
 ```
 
 **Backend:** FastAPI (Python) · **Frontend:** React + Vite + TailwindCSS
-**AI:** Google Gemini 1.5 Flash · **Telegram:** Telethon MTProto StringSession
+**AI:** Gemini 2.5 Flash / Gemini 1.5 Flash / Groq llama-3.3-70b · **Telegram:** Telethon MTProto StringSession
 **Database:** Supabase (PostgreSQL)
 
 ---
@@ -143,12 +143,12 @@ The frontend will be available at `http://localhost:5173`.
 
 ### Step 2 — Find Groups
 - On the Dashboard, enter an iGaming brand or keyword (e.g. `1xbet`, `betway affiliate`, `dream11 promoter`)
-- Click **"Find Groups"** — Gemini AI expands your keyword into 5 search terms and finds relevant Telegram groups
+- Click **"Find Groups"** — AI expands your keyword into 5 search terms and finds relevant Telegram groups
 - Review the group cards and **select** the ones you want to analyze
 
 ### Step 3 — Analyze Candidates
 - Click **"Analyze Selected Groups"**
-- The tool fetches the last 100 messages from each group and sends them to Gemini AI
+- The tool fetches the last 100 messages from each group and sends them to the selected AI model
 - AI scores each user from 1–10 based on affiliate marketing potential
 - You're automatically redirected to the Candidates page
 
@@ -221,4 +221,4 @@ The frontend will be available at `http://localhost:5173`.
 
 > 📱 **Phone Number:** The phone number used to log in must be an active Telegram account. Standard Telegram rate limits apply to group searches and message sends.
 
-> 🤖 **AI Accuracy:** Gemini AI scoring is based on message context and may not be 100% accurate. Always review candidates manually before outreach.
+> 🤖 **AI Accuracy:** AI scoring is based on message context and may not be 100% accurate. Always review candidates manually before outreach.
