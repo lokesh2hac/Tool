@@ -13,10 +13,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
 
-# No SDK — direct REST API call with key in URL
+# Direct REST API - no SDK, no OAuth issues
+# Using stable gemini-1.5-flash (NOT preview - preview causes 404)
 GEMINI_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"gemini-2.5-flash-preview-05-20:generateContent?key={GEMINI_API_KEY}"
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 )
 
 CANDIDATE_ANALYSIS_PROMPT = """You are an expert talent scout for ACE2KING, a leading iGaming and sports betting platform targeting INDIA.
@@ -83,7 +84,7 @@ def _strip_markdown(text: str) -> str:
 
 
 def _call_gemini_sync(prompt: str) -> str:
-    """Direct REST call to Gemini API — no SDK, no OAuth, just API key in URL."""
+    """Direct REST call to Gemini API - no SDK, no OAuth."""
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -136,7 +137,7 @@ async def generate_keywords(brand_name: str) -> list:
 async def analyze_candidates(messages_list: list) -> list:
     """
     Analyze Telegram messages with smart Indian affiliate/promoter detection.
-    Uses direct REST API — no SDK auth issues.
+    Uses direct REST API - no SDK auth issues.
     """
     if not messages_list:
         return []
@@ -157,7 +158,7 @@ async def analyze_candidates(messages_list: list) -> list:
         raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
-        if isinstance(candidates, list):
+        if isinstance(candidates, list):\
             # Indian users first, then by score
             candidates.sort(
                 key=lambda x: (
