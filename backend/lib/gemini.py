@@ -3,26 +3,16 @@ import sys
 import json
 import re
 import asyncio
-import urllib.request
-import urllib.error
 import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
-if not GEMINI_API_KEY:
-    sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
+if not GROQ_API_KEY:
+    sys.exit("ERROR: GROQ_API_KEY is not set. Get free key from https://console.groq.com/keys")
 
-# ─────────────────────────────────────────
-# API ENDPOINTS
-# ─────────────────────────────────────────
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
@@ -119,49 +109,10 @@ def _strip_markdown(text: str) -> str:
 
 
 # ─────────────────────────────────────────
-# GEMINI CALL (urllib - Google doesn't block it)
-# ─────────────────────────────────────────
-def _call_gemini_sync(prompt: str) -> str:
-    """Direct REST call to Gemini 2.5 Flash."""
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 4096,
-        }
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        GEMINI_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        return result["candidates"][0]["content"]["parts"][0]["text"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        raise RuntimeError(f"GEMINI_FAILED:{e.code}:{body}")
-
-
-# ─────────────────────────────────────────
-# GROQ CALL (httpx - bypasses Cloudflare block)
-# urllib gets 403 from Groq's Cloudflare, httpx mimics curl properly
+# GROQ CALL (httpx - works with Cloudflare)
 # ─────────────────────────────────────────
 def _call_groq_sync(prompt: str) -> str:
-    """
-    REST call to Groq using httpx (not urllib).
-    httpx sends proper headers that pass Cloudflare — urllib gets 403.
-    """
-    if not GROQ_API_KEY:
-        raise RuntimeError(
-            "GROQ_API_KEY not set. Add it in Render environment variables. "
-            "Get free key from https://console.groq.com/keys"
-        )
-
+    """REST call to Groq using httpx — bypasses Cloudflare block that urllib gets."""
     payload = {
         "model": GROQ_MODEL,
         "messages": [
@@ -196,40 +147,18 @@ def _call_groq_sync(prompt: str) -> str:
 
 
 # ─────────────────────────────────────────
-# SMART CALL: Gemini first → Groq fallback
-# ─────────────────────────────────────────
-def _call_ai_sync(prompt: str) -> str:
-    """
-    Try Gemini 2.5 Flash first.
-    On ANY failure (rate limit 429, quota, etc.) → auto-switch to Groq llama-3.3-70b.
-    Both fail → raise error.
-    """
-    try:
-        return _call_gemini_sync(prompt)
-    except RuntimeError as gemini_err:
-        try:
-            return _call_groq_sync(prompt)
-        except RuntimeError as groq_err:
-            raise RuntimeError(
-                f"Both AI providers failed.\n"
-                f"Gemini: {gemini_err}\n"
-                f"Groq: {groq_err}"
-            )
-
-
-# ─────────────────────────────────────────
 # PUBLIC FUNCTIONS
 # ─────────────────────────────────────────
 async def generate_keywords(brand_name: str) -> dict:
     """
-    Generate multi-strategy search keywords.
+    Generate multi-strategy search keywords using Groq.
     Returns dict: {brand, affiliate, category, hinglish}
-    Gemini first → Groq fallback → hardcoded fallback
+    Falls back to hardcoded keywords if Groq fails.
     """
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
         loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_ai_sync, prompt)
+        raw_text = await loop.run_in_executor(None, _call_groq_sync, prompt)
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
         if isinstance(keywords, dict):
@@ -240,7 +169,7 @@ async def generate_keywords(brand_name: str) -> dict:
 
 
 def _fallback_keywords(brand_name: str) -> dict:
-    """Hardcoded fallback — works even when both AI providers are down."""
+    """Hardcoded fallback — works even when Groq is down."""
     return {
         "brand": [brand_name, f"{brand_name} india"],
         "affiliate": [f"{brand_name} affiliate", "betting affiliate india", "igaming promoter india"],
@@ -253,7 +182,7 @@ async def analyze_candidates(messages_list: list) -> list:
     """
     Analyze messages to find shortlistable affiliate candidates.
     Only includes users WITH a Telegram username (outreach-ready).
-    Gemini first → Groq fallback automatically.
+    Uses Groq llama-3.3-70b-versatile.
     """
     if not messages_list:
         return []
@@ -277,7 +206,7 @@ async def analyze_candidates(messages_list: list) -> list:
 
     try:
         loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_ai_sync, prompt)
+        raw_text = await loop.run_in_executor(None, _call_groq_sync, prompt)
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):
