@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import asyncio
+import urllib.request
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,15 +13,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
 
-# Remove Google Cloud ADC vars so SDK uses API key, not OAuth
-os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
-os.environ.pop("GOOGLE_CLOUD_PROJECT", None)
-os.environ.pop("GCLOUD_PROJECT", None)
-
-import google.generativeai as genai
-genai.configure(api_key=GEMINI_API_KEY)
-
-MODEL_NAME = "gemini-2.5-flash-preview-05-20"
+# No SDK — direct REST API call with key in URL
+GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/"
+    f"gemini-2.5-flash-preview-05-20:generateContent?key={GEMINI_API_KEY}"
+)
 
 CANDIDATE_ANALYSIS_PROMPT = """You are an expert talent scout for ACE2KING, a leading iGaming and sports betting platform targeting INDIA.
 We need AFFILIATE MARKETING AGENTS and WEBSITE PROMOTER AGENTS who can bring Indian users to our platform.
@@ -86,10 +83,26 @@ def _strip_markdown(text: str) -> str:
 
 
 def _call_gemini_sync(prompt: str) -> str:
-    """Synchronous Gemini call - always uses API key."""
-    model = genai.GenerativeModel(MODEL_NAME)
-    response = model.generate_content(prompt)
-    return response.text
+    """Direct REST call to Gemini API — no SDK, no OAuth, just API key in URL."""
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 8192,
+        }
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        GEMINI_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+
+    return result["candidates"][0]["content"]["parts"][0]["text"]
 
 
 async def generate_keywords(brand_name: str) -> list:
@@ -123,7 +136,7 @@ async def generate_keywords(brand_name: str) -> list:
 async def analyze_candidates(messages_list: list) -> list:
     """
     Analyze Telegram messages with smart Indian affiliate/promoter detection.
-    Returns scored candidate list sorted by score descending.
+    Uses direct REST API — no SDK auth issues.
     """
     if not messages_list:
         return []
@@ -145,7 +158,7 @@ async def analyze_candidates(messages_list: list) -> list:
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):
-            # Sort: Indian users first, then by score
+            # Indian users first, then by score
             candidates.sort(
                 key=lambda x: (
                     0 if x.get("is_indian_likely") else 1,
