@@ -19,60 +19,59 @@ GEMINI_URL = (
     f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 )
 
-CANDIDATE_ANALYSIS_PROMPT = """You are an expert talent scout for ACE2KING, a leading iGaming and sports betting platform targeting INDIA.
-We need AFFILIATE MARKETING AGENTS and WEBSITE PROMOTER AGENTS who can bring Indian users to our platform.
+# ─────────────────────────────────────────
+# KEYWORD GENERATION PROMPT
+# ─────────────────────────────────────────
+KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
-Analyze the Telegram messages below. Identify users who are GENUINELY likely to be good affiliate/promoter candidates.
+Brand/Topic: '{brand_name}'
 
-=== SCORING CRITERIA (1-10) ===
+Generate FOUR SEPARATE search strategy arrays for Telegram group search.
+Each strategy finds different types of relevant groups:
 
-AFFILIATE/PROMOTER SIGNALS (most important):
-- Runs Telegram channels, YouTube, Instagram, or websites
-- Mentions SEO, paid ads, traffic, conversions, landing pages
-- Talks about referral programs, commissions, earning online
-- Experience in digital marketing, promoting apps or services
-- Already promotes betting/fantasy/gaming apps (Dream11, MPL, etc.)
-- Asks about affiliate links, payout methods, CPA/RevShare models
+Strategy A - BRAND TERMS: Variations of the brand name itself (2 keywords)
+Strategy B - AFFILIATE/PROMOTER TERMS: People who promote/earn from betting (3 keywords, India-focused)
+Strategy C - CATEGORY TERMS: iGaming/betting community terms in English (3 keywords)
+Strategy D - HINGLISH TERMS: Indian slang terms for earning/betting (2 keywords, use actual Hindi/Hinglish)
 
-INDIA-FIT SIGNALS (high priority):
-- Mentions India, Indian cities (Mumbai, Delhi, Bangalore, Hyderabad, Chennai, Kolkata, Pune, Jaipur, etc.)
-- Uses Hinglish/Hindi: bhai, yaar, paise, kamai, paisa, rupee, lakh, crore
-- References UPI, Paytm, PhonePe, GPay, INR, \u20b9
-- Mentions IPL, cricket, kabaddi, Dream11, MPL, fantasy sports
-- Indian telecom: Jio, Airtel, Vi
-- Indian slang or regional language mixing
+Rules:
+- Each keyword should be 1-4 words max (short = better Telegram search results)
+- NO duplicates across strategies
+- Strategy D must use actual Hinglish like "paise kamao", "satta tips", "kamai online"
 
-FALSE POSITIVE FILTERS (reduce score if):
-- Just asking basic questions with no marketing context
-- Spamming unrelated content
-- Only talking about personal betting (player, not promoter)
-- Bot-like repetitive messages
+Return ONLY this exact JSON format, no markdown, no explanation:
+{{
+  "brand": ["kw1", "kw2"],
+  "affiliate": ["kw1", "kw2", "kw3"],
+  "category": ["kw1", "kw2", "kw3"],
+  "hinglish": ["kw1", "kw2"]
+}}"""
 
-Messages (format: "@username (Display Name): message text"):
+
+# ─────────────────────────────────────────
+# CANDIDATE ANALYSIS PROMPT (token-efficient)
+# ─────────────────────────────────────────
+CANDIDATE_ANALYSIS_PROMPT = """Analyze these Telegram messages. Find users who could be AFFILIATE MARKETING AGENTS for an Indian iGaming/betting platform.
+
+SHORTLIST if user:
+- Has a Telegram username (starts with @) — REQUIRED for outreach
+- Mentions: referrals, commissions, affiliate links, promoting apps, earning online
+- Shows India signals: Hinglish, UPI/Paytm, cricket/IPL/Dream11, Indian cities
+- Runs channels, websites, or has an audience
+
+SKIP if user:
+- Has no username (@NoUsername) — cannot be contacted
+- Only asking questions, not a promoter
+- Bot-like or spammy messages
+- Only personal bettor, not a promoter
+
+Messages:
 {messages}
 
-Return ONLY a valid JSON array (no markdown, no explanation):
-[
-  {{
-    "username": "@handle_or_NoUsername",
-    "display_name": "Full Name",
-    "score": 8,
-    "reason": "Runs a cricket tips Telegram channel, mentioned referral commissions, uses Hinglish",
-    "sample_message": "exact quote from their message",
-    "india_confidence": 0.9,
-    "india_signals": ["Hinglish", "Mentioned IPL", "UPI reference"],
-    "fit_tags": ["channel_owner", "affiliate_aware", "cricket_audience"],
-    "is_indian_likely": true
-  }}
-]
+Return ONLY valid JSON array, no markdown:
+[{{"username":"@handle","display_name":"Name","score":8,"reason":"brief reason","sample_message":"their exact message","is_indian_likely":true}}]
 
-Strict Rules:
-- Only include users with score >= 6
-- Deduplicate by username
-- Maximum 20 candidates
-- Prefer Indian users over non-Indian with same score
-- Sort by score descending
-- If no candidates qualify, return empty array []"""
+Rules: score>=6 only, deduplicate by username, max 15, sort by score desc, return [] if none qualify."""
 
 
 def _strip_markdown(text: str) -> str:
@@ -87,8 +86,8 @@ def _call_gemini_sync(prompt: str) -> str:
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 8192,
+            "temperature": 0.2,
+            "maxOutputTokens": 4096,
         }
     }).encode("utf-8")
 
@@ -108,69 +107,59 @@ def _call_gemini_sync(prompt: str) -> str:
         raise RuntimeError(f"Gemini HTTP {e.code}: {body}")
 
 
-async def generate_keywords(brand_name: str) -> list:
+async def generate_keywords(brand_name: str) -> dict:
     """
-    Generate 10 smart, India-focused Telegram search keywords.
-    Mix of English + Hinglish + brand-specific + category terms.
+    Generate multi-strategy search keywords.
+    Returns dict: {brand, affiliate, category, hinglish}
+    Falls back to hardcoded keywords if Gemini fails/rate-limited.
     """
-    prompt = (
-        f"You are a Telegram group discovery expert for Indian iGaming market.\n"
-        f"Generate exactly 10 Telegram search keywords to find groups related to: '{brand_name}'.\n\n"
-        f"Rules:\n"
-        f"- Mix of: brand name variations, affiliate/promoter terms, India-specific terms\n"
-        f"- Include Hinglish terms (e.g. 'paise kamao', 'betting tips india')\n"
-        f"- Include cricket/IPL/fantasy sports terms if relevant\n"
-        f"- Include affiliate/promoter/agent/partner terms\n"
-        f"- Short 1-3 word phrases work best for Telegram search\n"
-        f"- NO duplicate meanings\n\n"
-        f"Return ONLY a valid JSON array of 10 strings, no explanation, no markdown.\n"
-        f'Example: ["keyword1", "keyword2", ..., "keyword10"]'
-    )
+    prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
         loop = asyncio.get_event_loop()
         raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
-        if isinstance(keywords, list) and len(keywords) >= 3:
-            return [str(k) for k in keywords[:10]]
+        if isinstance(keywords, dict):
+            return keywords
         return _fallback_keywords(brand_name)
     except Exception:
         return _fallback_keywords(brand_name)
 
 
-def _fallback_keywords(brand_name: str) -> list:
-    """Fallback keywords if Gemini fails."""
-    return [
-        brand_name,
-        f"{brand_name} affiliate",
-        f"{brand_name} agent india",
-        f"{brand_name} promoter",
-        "igaming affiliate india",
-        "betting affiliate program",
-        "cricket betting tips india",
-        "paise kamao online",
-        "fantasy sports affiliate",
-        "ipl betting group india",
-    ]
+def _fallback_keywords(brand_name: str) -> dict:
+    """Hardcoded fallback — works even when Gemini is rate-limited."""
+    return {
+        "brand": [brand_name, f"{brand_name} india"],
+        "affiliate": [f"{brand_name} affiliate", "betting affiliate india", "igaming promoter india"],
+        "category": ["cricket betting group", "fantasy sports india", "online earning india"],
+        "hinglish": ["paise kamao online", "satta affiliate"],
+    }
 
 
 async def analyze_candidates(messages_list: list) -> list:
     """
-    Analyze Telegram messages with smart Indian affiliate/promoter detection.
-    Uses direct REST API - no SDK auth issues.
+    Analyze messages to find shortlistable affiliate candidates.
+    Only includes users WITH a Telegram username (outreach-ready).
+    Token-efficient prompt to avoid rate limits.
     """
     if not messages_list:
         return []
 
-    formatted = "\n".join(
-        f"@{m.get('sender_username', 'NoUsername')} ({m.get('sender_name', 'Unknown')}): {m.get('text', '')}"
-        for m in messages_list
-        if m.get("text")
-    )
+    # Only include messages from users who HAVE a username — no username = can't contact
+    formatted_lines = []
+    for m in messages_list:
+        if not m.get("text"):
+            continue
+        username = m.get("sender_username", "").strip()
+        sender = f"@{username}" if username else "@NoUsername"
+        name = m.get("sender_name", "Unknown")
+        formatted_lines.append(f"{sender} ({name}): {m['text']}")
 
-    if not formatted.strip():
+    if not formatted_lines:
         return []
 
+    # Truncate to 150 messages max to save tokens
+    formatted = "\n".join(formatted_lines[:150])
     prompt = CANDIDATE_ANALYSIS_PROMPT.format(messages=formatted)
 
     try:
@@ -179,7 +168,12 @@ async def analyze_candidates(messages_list: list) -> list:
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):
-            # Indian users first, then by score
+            # Filter: must have real username, not @NoUsername
+            candidates = [
+                c for c in candidates
+                if c.get("username") and c["username"] != "@NoUsername"
+            ]
+            # Sort: Indian first, then by score
             candidates.sort(
                 key=lambda x: (
                     0 if x.get("is_indian_likely") else 1,
