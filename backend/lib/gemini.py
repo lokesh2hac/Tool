@@ -21,6 +21,7 @@ GEMINI_URL = (
 
 # ─────────────────────────────────────────
 # KEYWORD GENERATION PROMPT
+# Multi-strategy: brand + affiliate + category + hinglish
 # ─────────────────────────────────────────
 KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
@@ -49,8 +50,9 @@ Return ONLY this exact JSON format, no markdown, no explanation:
 
 
 # ─────────────────────────────────────────
-# CANDIDATE ANALYSIS PROMPT (token-efficient)
-# ─────────────────────────────────────────
+# CANDIDATE ANALYSIS PROMPT
+# Token-efficient, username-required filter
+# ──────────────────────────────────────���──
 CANDIDATE_ANALYSIS_PROMPT = """Analyze these Telegram messages. Find users who could be AFFILIATE MARKETING AGENTS for an Indian iGaming/betting platform.
 
 SHORTLIST if user:
@@ -145,7 +147,7 @@ async def analyze_candidates(messages_list: list) -> list:
     if not messages_list:
         return []
 
-    # Only include messages from users who HAVE a username — no username = can't contact
+    # Format messages — tag @NoUsername so Gemini knows to skip them
     formatted_lines = []
     for m in messages_list:
         if not m.get("text"):
@@ -168,12 +170,12 @@ async def analyze_candidates(messages_list: list) -> list:
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):
-            # Filter: must have real username, not @NoUsername
+            # Hard filter: must have real username — no username = can't do outreach
             candidates = [
                 c for c in candidates
-                if c.get("username") and c["username"] != "@NoUsername"
+                if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
             ]
-            # Sort: Indian first, then by score
+            # Sort: Indian first, then by score desc
             candidates.sort(
                 key=lambda x: (
                     0 if x.get("is_indian_likely") else 1,
