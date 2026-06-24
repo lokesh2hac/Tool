@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import axios from 'axios'
+import api from '../api'
 
 export default function Login({ setAuth, showToast }) {
   const [step, setStep] = useState(1)
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
+  const [phoneCodeHash, setPhoneCodeHash] = useState('')  // store hash from backend
   const [loading, setLoading] = useState(false)
 
   const handleSendCode = async (e) => {
@@ -12,7 +13,9 @@ export default function Login({ setAuth, showToast }) {
     if (!phone.trim()) return
     setLoading(true)
     try {
-      await axios.post('/api/auth/send-code', { phone }, { withCredentials: true })
+      const res = await api.post('/api/auth/send-code', { phone })
+      // Save phone_code_hash returned from backend
+      setPhoneCodeHash(res.data.phone_code_hash)
       setStep(2)
       showToast('OTP sent to your Telegram!', 'success')
     } catch (err) {
@@ -25,16 +28,32 @@ export default function Login({ setAuth, showToast }) {
   const handleVerifyCode = async (e) => {
     e.preventDefault()
     if (!code.trim()) return
+    if (!phoneCodeHash) {
+      showToast('Session lost. Please request OTP again.', 'error')
+      setStep(1)
+      return
+    }
     setLoading(true)
     try {
-      const res = await axios.post('/api/auth/verify-code', { phone, code }, { withCredentials: true })
+      // Send phone_code_hash back to backend for real Telegram verification
+      const res = await api.post('/api/auth/verify-code', {
+        phone,
+        code,
+        phone_code_hash: phoneCodeHash,
+      })
       showToast('Logged in successfully!', 'success')
       setAuth({ logged_in: true, phone, username: res.data.username })
     } catch (err) {
-      showToast(err.response?.data?.detail || 'Invalid OTP', 'error')
+      showToast(err.response?.data?.detail || 'Invalid OTP. Please try again.', 'error')
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleBack = () => {
+    setStep(1)
+    setCode('')
+    setPhoneCodeHash('')
   }
 
   return (
@@ -91,9 +110,9 @@ export default function Login({ setAuth, showToast }) {
                 <input
                   type="text"
                   value={code}
-                  onChange={(e) => setCode(e.target.value)}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                   placeholder="Enter OTP from Telegram"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 transition-colors text-center text-2xl tracking-widest"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 transition-colors text-center tracking-widest text-lg"
                   maxLength={6}
                   required
                 />
@@ -108,7 +127,7 @@ export default function Login({ setAuth, showToast }) {
               </button>
               <button
                 type="button"
-                onClick={() => { setStep(1); setCode('') }}
+                onClick={handleBack}
                 className="w-full text-gray-400 hover:text-white text-sm transition-colors py-2"
               >
                 ← Use a different number
