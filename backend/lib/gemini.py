@@ -1,16 +1,21 @@
 import os
+import sys
 import json
 import re
+import asyncio
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-client = genai.Client(api_key=GEMINI_API_KEY)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-MODEL = "gemini-2.0-flash"
+if not GEMINI_API_KEY:
+    sys.exit("ERROR: GEMINI_API_KEY is not set.")
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+MODEL_NAME = "gemini-2.5-flash-preview-05-20"
 
 CANDIDATE_ANALYSIS_PROMPT = """You are an HR assistant for ACE2KING, a leading iGaming and sports betting platform.
 We are recruiting AFFILIATE MARKETING AGENTS and WEBSITE PROMOTER AGENTS on a commission basis.
@@ -53,8 +58,15 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
+def _call_gemini_sync(prompt: str) -> str:
+    """Run a synchronous Gemini API call."""
+    model = genai.GenerativeModel(MODEL_NAME)
+    response = model.generate_content(prompt)
+    return response.text
+
+
 async def generate_keywords(brand_name: str) -> list:
-    """Ask Gemini to generate 5 iGaming Telegram search keywords for a brand."""
+    """Ask Gemini 2.5 Flash to generate 5 iGaming search keywords."""
     prompt = (
         f"Generate exactly 5 Telegram search keywords for finding iGaming affiliate marketing groups "
         f"related to the brand or topic: '{brand_name}'. "
@@ -63,11 +75,9 @@ async def generate_keywords(brand_name: str) -> list:
         f'Example: ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]'
     )
     try:
-        response = await client.aio.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-        )
-        raw = _strip_markdown(response.text)
+        loop = asyncio.get_event_loop()
+        raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
+        raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
         if isinstance(keywords, list):
             return [str(k) for k in keywords[:5]]
@@ -83,11 +93,7 @@ async def generate_keywords(brand_name: str) -> list:
 
 
 async def analyze_candidates(messages_list: list) -> list:
-    """
-    Send messages to Gemini for candidate analysis.
-    messages_list: list of dicts with keys: sender_username, sender_name, text
-    Returns parsed JSON list of candidates.
-    """
+    """Analyze Telegram messages with Gemini 2.5 Flash to find affiliate candidates."""
     if not messages_list:
         return []
 
@@ -103,11 +109,9 @@ async def analyze_candidates(messages_list: list) -> list:
     prompt = CANDIDATE_ANALYSIS_PROMPT.format(messages=formatted)
 
     try:
-        response = await client.aio.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-        )
-        raw = _strip_markdown(response.text)
+        loop = asyncio.get_event_loop()
+        raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
+        raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):
             return candidates

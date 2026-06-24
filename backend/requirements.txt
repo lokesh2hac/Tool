@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 telethon
-google-genai
+google-generativeai
 supabase
 python-dotenv
 python-multipart
