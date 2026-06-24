@@ -9,19 +9,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
 if not GEMINI_API_KEY:
     sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
 
-# Direct REST API - no SDK, no OAuth issues
+# ─────────────────────────────────────────
+# API ENDPOINTS
+# ─────────────────────────────────────────
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 )
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+
 
 # ─────────────────────────────────────────
 # KEYWORD GENERATION PROMPT
-# Multi-strategy: brand + affiliate + category + hinglish
 # ─────────────────────────────────────────
 KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
@@ -50,17 +55,16 @@ Return ONLY this exact JSON format, no markdown, no explanation:
 
 
 # ─────────────────────────────────────────
-# CANDIDATE ANALYSIS PROMPT (IMPROVED)
-# Token-efficient, username-required filter
+# CANDIDATE ANALYSIS PROMPT
 # ─────────────────────────────────────────
 CANDIDATE_ANALYSIS_PROMPT = """Analyze these Telegram messages. Find users who could be AFFILIATE MARKETING AGENTS for an Indian iGaming/betting platform.
 
-An **affiliate agent** is someone actively recruiting others to sign up / deposit / play through their personal referral code, link, or channel.  
+An **affiliate agent** is someone actively recruiting others to sign up / deposit / play through their personal referral code, link, or channel.
 Examples of strong signals:
 - Shares a referral code/link (e.g., "Use my code", "Sign up here", "Referral bonus", specific platform codes like 1xBet, Betway, Dafabet, Parimatch)
 - Invites people to DM/join for earning, commissions, or tips
 - Posts about "earning online", "passive income", "make money" tied to betting apps
-- Has a channel/group link and says “join for tips”, “free predictions”, “daily earning”
+- Has a channel/group link and says "join for tips", "free predictions", "daily earning"
 - Promotes direct download APK links with earning claims
 
 India-specific signals (raise confidence):
@@ -68,35 +72,35 @@ India-specific signals (raise confidence):
 - Mentions UPI apps: Paytm, PhonePe, Google Pay, GPay
 - References cricket, IPL, Dream11, fantasy, Indian city names
 
-Scoring guidelines (0–10):
-- 9‑10: Unambiguous affiliate – shares own referral code/link, asks people to DM, has username, clearly Indian
-- 7‑8: Strong promoter – mentions earning by invitation, has audience, but link/code not visible in sample
-- 6: Likely promoter – uses language like “earn money”, “join me”, but evidence is thin  
-(Only output score ≥6)
+Scoring guidelines (0-10):
+- 9-10: Unambiguous affiliate - shares own referral code/link, asks people to DM, has username, clearly Indian
+- 7-8: Strong promoter - mentions earning by invitation, has audience, but link/code not visible in sample
+- 6: Likely promoter - uses language like "earn money", "join me", but evidence is thin
+(Only output score >= 6)
 
 Mandatory requirements:
-- The user MUST have a Telegram username (starts with @) – otherwise skip entirely
-- Skip bots, spam accounts, users who only ask questions, personal bettors who don’t recruit
+- The user MUST have a Telegram username (starts with @) - otherwise skip entirely
+- Skip bots, spam accounts, users who only ask questions, personal bettors who don't recruit
 - If a user has multiple messages, pick the one that best demonstrates their score
 
 Input format:
 Each line is: @username (Display Name): message text
 (e.g., @rahulverma (Rahul V): Use my code IND123 for 200% bonus on 1xBet)
 
-Return ONLY this exact JSON array – no markdown, no explanation:
+Return ONLY this exact JSON array - no markdown, no explanation:
 [
-  {
+  {{
     "username": "@handle",
     "display_name": "Name",
     "score": 8,
     "reason": "short reason why this person is an affiliate",
     "sample_message": "exact message text that proves it",
     "is_indian_likely": true
-  }
+  }}
 ]
 
 Rules:
-- score ≥6 only
+- score >= 6 only
 - deduplicate by username (keep the highest score)
 - maximum 15 results, sorted by score descending (then Indian-first)
 - return empty array [] if none qualify
@@ -113,8 +117,11 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
+# ─────────────────────────────────────────
+# GEMINI CALL
+# ─────────────────────────────────────────
 def _call_gemini_sync(prompt: str) -> str:
-    """Direct REST call to Gemini API - no SDK, no OAuth."""
+    """Direct REST call to Gemini 2.5 Flash."""
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -136,19 +143,92 @@ def _call_gemini_sync(prompt: str) -> str:
         return result["candidates"][0]["content"]["parts"][0]["text"]
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
-        raise RuntimeError(f"Gemini HTTP {e.code}: {body}")
+        raise RuntimeError(f"GEMINI_FAILED:{e.code}:{body}")
 
 
+# ─────────────────────────────────────────
+# GROQ FALLBACK CALL
+# ─────────────────────────────────────────
+def _call_groq_sync(prompt: str) -> str:
+    """Fallback REST call to Groq (llama-3.3-70b-versatile). Free tier: 500k tokens/day."""
+    if not GROQ_API_KEY:
+        raise RuntimeError(
+            "GROQ_API_KEY not set. Add it in Render environment variables. "
+            "Get free key from https://console.groq.com/keys"
+        )
+
+    payload = json.dumps({
+        "model": GROQ_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 4096,
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        GROQ_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+        },
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        return result["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8")
+        raise RuntimeError(f"Groq HTTP {e.code}: {body}")
+
+
+# ─────────────────────────────────────────
+# SMART CALL: Gemini first → Groq fallback
+# ─────────────────────────────────────────
+def _call_ai_sync(prompt: str) -> str:
+    """
+    Try Gemini 2.5 Flash first.
+    On ANY failure (rate limit 429, 404, quota, etc.) → auto-switch to Groq llama-3.3-70b.
+    Both fail → raise error.
+    """
+    try:
+        return _call_gemini_sync(prompt)
+    except RuntimeError as gemini_err:
+        # Auto-fallback to Groq on any Gemini error
+        try:
+            return _call_groq_sync(prompt)
+        except RuntimeError as groq_err:
+            raise RuntimeError(
+                f"Both AI providers failed.\n"
+                f"Gemini error: {gemini_err}\n"
+                f"Groq error: {groq_err}"
+            )
+
+
+# ─────────────────────────────────────────
+# PUBLIC FUNCTIONS
+# ─────────────────────────────────────────
 async def generate_keywords(brand_name: str) -> dict:
     """
     Generate multi-strategy search keywords.
     Returns dict: {brand, affiliate, category, hinglish}
-    Falls back to hardcoded keywords if Gemini fails/rate-limited.
+    Gemini first → Groq fallback → hardcoded fallback
     """
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
         loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
+        raw_text = await loop.run_in_executor(None, _call_ai_sync, prompt)
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)
         if isinstance(keywords, dict):
@@ -159,7 +239,7 @@ async def generate_keywords(brand_name: str) -> dict:
 
 
 def _fallback_keywords(brand_name: str) -> dict:
-    """Hardcoded fallback — works even when Gemini is rate-limited."""
+    """Hardcoded fallback — works even when both AI providers are down."""
     return {
         "brand": [brand_name, f"{brand_name} india"],
         "affiliate": [f"{brand_name} affiliate", "betting affiliate india", "igaming promoter india"],
@@ -172,12 +252,12 @@ async def analyze_candidates(messages_list: list) -> list:
     """
     Analyze messages to find shortlistable affiliate candidates.
     Only includes users WITH a Telegram username (outreach-ready).
-    Token-efficient prompt to avoid rate limits.
+    Gemini first → Groq fallback automatically.
     """
     if not messages_list:
         return []
 
-    # Format messages — tag @NoUsername so Gemini knows to skip them
+    # Format messages — tag @NoUsername so AI knows to skip them
     formatted_lines = []
     for m in messages_list:
         if not m.get("text"):
@@ -196,7 +276,7 @@ async def analyze_candidates(messages_list: list) -> list:
 
     try:
         loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, _call_gemini_sync, prompt)
+        raw_text = await loop.run_in_executor(None, _call_ai_sync, prompt)
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
         if isinstance(candidates, list):
@@ -215,4 +295,4 @@ async def analyze_candidates(messages_list: list) -> list:
             return candidates
         return []
     except Exception as e:
-        raise RuntimeError(f"Gemini analysis failed: {str(e)}")
+        raise RuntimeError(f"AI analysis failed: {str(e)}")
