@@ -8,7 +8,7 @@ export default function TopBar({ auth, setAuth, showToast }) {
   const menuRef = useRef(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showModels, setShowModels] = useState(false)
-  const [selectedModel, setSelectedModel] = useState(getStoredModel)
+  const [selectedModel, setSelectedModel] = useState(() => getStoredModel())
 
   useEffect(() => {
     setStoredModel(selectedModel || DEFAULT_MODEL)
