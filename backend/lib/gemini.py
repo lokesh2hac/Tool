@@ -44,7 +44,7 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS
+# PROMPTS (improved with escaping instructions)
 # -------------------------------------------------------------------
 KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
@@ -124,7 +124,7 @@ Your task: Analyze the given Telegram **group** messages and **identify users wh
   "display_name": "Name",
   "score": 8,
   "reason": "Concise reason why this person is a strong affiliate/promoter (mention referral code, recruitment language, etc.)",
-  "sample_message": "The exact message text that proves it",
+  "sample_message": "exact message text that proves it (escape double quotes with \\\" and newlines with \\n)",
   "is_indian_likely": true/false,
   "existing_platform": "If they mention a specific platform (e.g., 1xBet, Betway) – useful for competitive recruitment"
 }}
@@ -139,11 +139,70 @@ Your task: Analyze the given Telegram **group** messages and **identify users wh
 """
 
 
+# -------------------------------------------------------------------
+# JSON EXTRACTION & PARSING HELPERS
+# -------------------------------------------------------------------
 def _strip_markdown(text: str) -> str:
     text = text.strip()
+    # Remove code fences
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     return text.strip()
+
+
+def _extract_json(text: str) -> Any:
+    """
+    Attempt to extract a JSON object or array from the AI response.
+    First tries to parse the entire stripped text.
+    If that fails, tries to find a JSON block using regex.
+    Also attempts to fix common issues like trailing commas.
+    """
+    text = _strip_markdown(text)
+    
+    # Try direct parsing
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to find the first '{' or '[' and extract balanced brackets
+    # Find the first opening brace/bracket
+    start = None
+    for i, ch in enumerate(text):
+        if ch in '{[':
+            start = i
+            break
+    if start is None:
+        raise ValueError("No JSON structure found in AI response")
+    
+    # Balance brackets
+    stack = []
+    end = None
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch in '{[':
+            stack.append(ch)
+        elif ch in '}]':
+            if not stack:
+                break
+            opening = stack.pop()
+            if (ch == '}' and opening != '{') or (ch == ']' and opening != '['):
+                break
+            if not stack:
+                end = i + 1
+                break
+    if end is None:
+        raise ValueError("Unbalanced JSON structure")
+    
+    json_candidate = text[start:end]
+    
+    # Attempt to fix common issues: trailing commas
+    json_candidate = re.sub(r',\s*([}\]])', r'\1', json_candidate)
+    
+    try:
+        return json.loads(json_candidate)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON even after extraction: {e}")
 
 
 # -------------------------------------------------------------------
@@ -155,7 +214,7 @@ def _call_groq_sync(prompt: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text."
+                "content": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text. Ensure all strings are properly escaped for JSON (escape double quotes and newlines)."
             },
             {
                 "role": "user",
@@ -198,7 +257,7 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
             "maxOutputTokens": 4096,
         },
         "systemInstruction": {
-            "parts": [{"text": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text."}]
+            "parts": [{"text": "You are an expert AI assistant. Always return valid JSON exactly as instructed. No markdown, no explanation, no extra text. Ensure all strings are properly escaped for JSON (escape double quotes and newlines)."}]
         }
     }
 
@@ -305,8 +364,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
             None,
             functools.partial(_call_ai_sync, prompt, model=model),
         )
-        raw = _strip_markdown(raw_text)
-        data = json.loads(raw)
+        data = _extract_json(raw_text)
         if isinstance(data, dict) and "keywords" in data:
             keywords = data["keywords"]
             if isinstance(keywords, list) and len(keywords) >= 20:
@@ -322,7 +380,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
 
 async def analyze_candidates(
     messages_list: List[Dict[str, Any]],
-    brand_name: Optional[str] = None,        # now optional; uses placeholder if None
+    brand_name: Optional[str] = None,
     key_id: Optional[str] = None,
     model: str = DEFAULT_GEMINI_MODEL
 ) -> List[Dict[str, Any]]:
@@ -343,7 +401,9 @@ async def analyze_candidates(
         username = m.get("sender_username", "").strip()
         sender = f"@{username}" if username else "@NoUsername"
         name = m.get("sender_name", "Unknown")
-        formatted_lines.append(f"{sender} ({name}): {m['text']}")
+        # Escape any double quotes in the message text to avoid breaking JSON later
+        msg = m["text"].replace('"', '\\"').replace('\n', '\\n')
+        formatted_lines.append(f"{sender} ({name}): {msg}")
 
     if not formatted_lines:
         return []
@@ -357,8 +417,7 @@ async def analyze_candidates(
             None,
             functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model),
         )
-        raw = _strip_markdown(raw_text)
-        candidates = json.loads(raw)
+        candidates = _extract_json(raw_text)
     except GeminiRateLimitError:
         raise
     except Exception as e:
