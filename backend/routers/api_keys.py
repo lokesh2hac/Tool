@@ -34,7 +34,7 @@ async def list_api_keys(request: Request):
     try:
         res = supabase.table("api_keys").select(
             "id, label, provider, api_key, is_active, rate_limited_until, created_at"
-        ).order("created_at", desc=False).execute()
+        ).order("created_at").execute()
         keys = res.data or []
         # Mask the key value
         for key in keys:

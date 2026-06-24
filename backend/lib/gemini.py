@@ -3,7 +3,9 @@ import sys
 import json
 import re
 import asyncio
+import functools
 import httpx
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,9 +27,8 @@ _active_gemini_key: str = ""
 
 class GeminiRateLimitError(Exception):
     """Raised when Gemini returns HTTP 429 (rate limited)."""
-    def __init__(self, key_used: str = "", key_id: str = ""):
-        self.key_used = key_used
-        self.key_id = key_id
+    def __init__(self, key_id: Optional[str] = None):
+        self.key_id = key_id or ""
         super().__init__(f"Gemini rate limit hit for key_id={key_id!r}")
 
 
@@ -169,7 +170,7 @@ def _call_groq_sync(prompt: str) -> str:
 # ─────────────────────────────────────────
 # GEMINI CALL (httpx REST)
 # ─────────────────────────────────────────
-def _call_gemini_sync(prompt: str, key_id: str = "") -> str:
+def _call_gemini_sync(prompt: str, key_id: Optional[str] = None) -> str:
     """REST call to Gemini using httpx. Raises GeminiRateLimitError on 429."""
     api_key = _active_gemini_key or GEMINI_API_KEY
     if not api_key:
@@ -197,7 +198,7 @@ def _call_gemini_sync(prompt: str, key_id: str = "") -> str:
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code == 429:
-            raise GeminiRateLimitError(key_used=api_key, key_id=key_id)
+            raise GeminiRateLimitError(key_id=key_id)
         if resp.status_code != 200:
             raise RuntimeError(f"Gemini HTTP {resp.status_code}: {resp.text}")
         result = resp.json()
@@ -208,7 +209,7 @@ def _call_gemini_sync(prompt: str, key_id: str = "") -> str:
     return candidates[0]["content"]["parts"][0]["text"]
 
 
-def _call_ai_sync(prompt: str, key_id: str = "") -> str:
+def _call_ai_sync(prompt: str, key_id: Optional[str] = None) -> str:
     """
     Try Gemini first (if any key is configured); fall back to Groq only if NO
     Gemini key is available at all.  GeminiRateLimitError is always re-raised
@@ -256,7 +257,7 @@ def _fallback_keywords(brand_name: str) -> dict:
     }
 
 
-async def analyze_candidates(messages_list: list, key_id: str = "") -> list:
+async def analyze_candidates(messages_list: list, key_id: Optional[str] = None) -> list:
     """
     Analyze messages to find shortlistable affiliate candidates.
     Only includes users WITH a Telegram username (outreach-ready).
@@ -285,7 +286,7 @@ async def analyze_candidates(messages_list: list, key_id: str = "") -> list:
 
     loop = asyncio.get_event_loop()
     try:
-        raw_text = await loop.run_in_executor(None, lambda: _call_ai_sync(prompt, key_id=key_id))
+        raw_text = await loop.run_in_executor(None, functools.partial(_call_ai_sync, prompt, key_id=key_id))
         raw = _strip_markdown(raw_text)
         candidates = json.loads(raw)
     except GeminiRateLimitError:

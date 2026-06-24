@@ -66,7 +66,8 @@ export default function Dashboard({ showToast }) {
 
   /**
    * Show the key-picker modal and wait for the user to pick a key.
-   * Returns the selected key object or null if the user cancelled.
+   * Sets state to trigger the modal render, then returns a Promise that
+   * resolves to the selected key object { id, label } or null if cancelled.
    */
   const waitForKeySelection = (rateLimitedKeyId) => {
     return new Promise((resolve) => {
@@ -75,17 +76,7 @@ export default function Dashboard({ showToast }) {
   }
 
   const handleKeySelected = async (key) => {
-    // Fetch the full (unmasked) api_key from the backend for this key id
-    // The backend returns masked keys in list, but we pass the key object
-    // The user selected a key — we need to get the actual api_key value.
-    // Since the backend masks keys, we store a reference. The backend
-    // analyze endpoint accepts gemini_key_id + gemini_api_key; to get the
-    // actual key, we rely on the backend to look it up by ID.
-    // We pass key_id and leave gemini_api_key empty — the backend will use
-    // the stored key from DB.  But the current design passes api_key in body.
-    // To avoid exposing the key to the frontend we send only gemini_key_id and
-    // let the backend resolve it. We update candidates.py to support that pattern.
-    // For now, store the selected key id so analysis uses it.
+    // Store the selected key id and resolve the pending Promise so analysis continues.
     const selected = { id: key.id, label: key.label }
     setActiveGeminiKey(selected)
     if (rateLimitState?.resolveKey) {

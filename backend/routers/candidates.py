@@ -69,7 +69,7 @@ async def analyze_candidates(body: AnalyzeRequest, request: Request):
     messages_list = [m.dict() for m in body.messages]
 
     try:
-        candidates = await gemini.analyze_candidates(messages_list, key_id=body.gemini_key_id or "")
+        candidates = await gemini.analyze_candidates(messages_list, key_id=body.gemini_key_id)
     except GeminiRateLimitError as e:
         raise HTTPException(
             status_code=429,
@@ -113,7 +113,7 @@ async def analyze_bulk(body: BulkAnalyzeRequest, request: Request):
             continue
 
         try:
-            candidates = await gemini.analyze_candidates(messages_list, key_id=body.gemini_key_id or "")
+            candidates = await gemini.analyze_candidates(messages_list, key_id=body.gemini_key_id)
             saved = await _save_candidates(candidates, grp.group_id)
             for c in saved:
                 c["source_group"] = grp.group_username
