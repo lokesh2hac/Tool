@@ -50,30 +50,60 @@ Return ONLY this exact JSON format, no markdown, no explanation:
 
 
 # ─────────────────────────────────────────
-# CANDIDATE ANALYSIS PROMPT
+# CANDIDATE ANALYSIS PROMPT (IMPROVED)
 # Token-efficient, username-required filter
-# ──────────────────────────────────────���──
+# ─────────────────────────────────────────
 CANDIDATE_ANALYSIS_PROMPT = """Analyze these Telegram messages. Find users who could be AFFILIATE MARKETING AGENTS for an Indian iGaming/betting platform.
 
-SHORTLIST if user:
-- Has a Telegram username (starts with @) — REQUIRED for outreach
-- Mentions: referrals, commissions, affiliate links, promoting apps, earning online
-- Shows India signals: Hinglish, UPI/Paytm, cricket/IPL/Dream11, Indian cities
-- Runs channels, websites, or has an audience
+An **affiliate agent** is someone actively recruiting others to sign up / deposit / play through their personal referral code, link, or channel.  
+Examples of strong signals:
+- Shares a referral code/link (e.g., "Use my code", "Sign up here", "Referral bonus", specific platform codes like 1xBet, Betway, Dafabet, Parimatch)
+- Invites people to DM/join for earning, commissions, or tips
+- Posts about "earning online", "passive income", "make money" tied to betting apps
+- Has a channel/group link and says “join for tips”, “free predictions”, “daily earning”
+- Promotes direct download APK links with earning claims
 
-SKIP if user:
-- Has no username (@NoUsername) — cannot be contacted
-- Only asking questions, not a promoter
-- Bot-like or spammy messages
-- Only personal bettor, not a promoter
+India-specific signals (raise confidence):
+- Uses Hinglish words: paisa, kamai, satta, adda, tip, betting ID, lagao
+- Mentions UPI apps: Paytm, PhonePe, Google Pay, GPay
+- References cricket, IPL, Dream11, fantasy, Indian city names
+
+Scoring guidelines (0–10):
+- 9‑10: Unambiguous affiliate – shares own referral code/link, asks people to DM, has username, clearly Indian
+- 7‑8: Strong promoter – mentions earning by invitation, has audience, but link/code not visible in sample
+- 6: Likely promoter – uses language like “earn money”, “join me”, but evidence is thin  
+(Only output score ≥6)
+
+Mandatory requirements:
+- The user MUST have a Telegram username (starts with @) – otherwise skip entirely
+- Skip bots, spam accounts, users who only ask questions, personal bettors who don’t recruit
+- If a user has multiple messages, pick the one that best demonstrates their score
+
+Input format:
+Each line is: @username (Display Name): message text
+(e.g., @rahulverma (Rahul V): Use my code IND123 for 200% bonus on 1xBet)
+
+Return ONLY this exact JSON array – no markdown, no explanation:
+[
+  {
+    "username": "@handle",
+    "display_name": "Name",
+    "score": 8,
+    "reason": "short reason why this person is an affiliate",
+    "sample_message": "exact message text that proves it",
+    "is_indian_likely": true
+  }
+]
+
+Rules:
+- score ≥6 only
+- deduplicate by username (keep the highest score)
+- maximum 15 results, sorted by score descending (then Indian-first)
+- return empty array [] if none qualify
+- output only the JSON array, nothing else
 
 Messages:
-{messages}
-
-Return ONLY valid JSON array, no markdown:
-[{{"username":"@handle","display_name":"Name","score":8,"reason":"brief reason","sample_message":"their exact message","is_indian_likely":true}}]
-
-Rules: score>=6 only, deduplicate by username, max 15, sort by score desc, return [] if none qualify."""
+{messages}"""
 
 
 def _strip_markdown(text: str) -> str:
