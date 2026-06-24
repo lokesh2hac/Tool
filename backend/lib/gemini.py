@@ -287,9 +287,7 @@ def _fallback_keywords(brand_name: str) -> List[str]:
         "recruiting agents",
         "become a promoter"
     ]
-    # Ensure uniqueness and at least 50
     unique = list(dict.fromkeys(base))
-    # Pad with generic if less than 50
     while len(unique) < 50:
         unique.append(f"betting{len(unique)}")
     return unique[:50]
@@ -312,7 +310,6 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
         if isinstance(data, dict) and "keywords" in data:
             keywords = data["keywords"]
             if isinstance(keywords, list) and len(keywords) >= 20:
-                # ensure at least 50, pad if needed
                 while len(keywords) < 50:
                     keywords.append(f"{brand_name}search{len(keywords)}")
                 return keywords[:50]
@@ -325,7 +322,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
 
 async def analyze_candidates(
     messages_list: List[Dict[str, Any]],
-    brand_name: str,
+    brand_name: Optional[str] = None,        # now optional; uses placeholder if None
     key_id: Optional[str] = None,
     model: str = DEFAULT_GEMINI_MODEL
 ) -> List[Dict[str, Any]]:
@@ -336,6 +333,8 @@ async def analyze_candidates(
     """
     if not messages_list:
         return []
+
+    display_brand = brand_name if brand_name else "the gaming platform"
 
     formatted_lines = []
     for m in messages_list:
@@ -350,7 +349,7 @@ async def analyze_candidates(
         return []
 
     formatted = "\n".join(formatted_lines[:150])
-    prompt = CANDIDATE_ANALYSIS_PROMPT.format(brand_name=brand_name, messages=formatted)
+    prompt = CANDIDATE_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
 
     loop = asyncio.get_event_loop()
     try:
@@ -366,12 +365,10 @@ async def analyze_candidates(
         raise RuntimeError(f"AI analysis failed: {str(e)}")
 
     if isinstance(candidates, list):
-        # Hard filter: must have real username
         candidates = [
             c for c in candidates
             if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
         ]
-        # Sort: Indian first, then by score desc
         candidates.sort(
             key=lambda x: (
                 0 if x.get("is_indian_likely") else 1,
@@ -380,17 +377,3 @@ async def analyze_candidates(
         )
         return candidates
     return []
-
-
-# -------------------------------------------------------------------
-# OPTIONAL: BATCH SEARCH HELPER (if you have a Telegram search function)
-# -------------------------------------------------------------------
-# async def search_groups_for_keywords(brand_name: str, search_func) -> List[Dict]:
-#     keywords = await generate_keywords(brand_name)
-#     all_messages = []
-#     for kw in keywords:
-#         messages = await search_func(kw)  # your existing Telegram search
-#         all_messages.extend(messages)
-#     # deduplicate, then analyze
-#     candidates = await analyze_candidates(all_messages, brand_name)
-#     return candidates
