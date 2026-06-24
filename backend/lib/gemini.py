@@ -4,15 +4,20 @@ import json
 import re
 import asyncio
 from dotenv import load_dotenv
-import google.generativeai as genai
 
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 if not GEMINI_API_KEY:
-    sys.exit("ERROR: GEMINI_API_KEY is not set.")
+    sys.exit("ERROR: GEMINI_API_KEY is not set. Get your key from https://aistudio.google.com/app/apikey")
 
+# Force remove ADC env vars so google SDK uses our API key, not OAuth
+os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+os.environ.pop("GOOGLE_CLOUD_PROJECT", None)
+os.environ.pop("GCLOUD_PROJECT", None)
+
+import google.generativeai as genai
 genai.configure(api_key=GEMINI_API_KEY)
 
 MODEL_NAME = "gemini-2.5-flash-preview-05-20"
@@ -51,7 +56,6 @@ Rules:
 
 
 def _strip_markdown(text: str) -> str:
-    """Remove markdown code fences from Gemini response."""
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
@@ -59,14 +63,13 @@ def _strip_markdown(text: str) -> str:
 
 
 def _call_gemini_sync(prompt: str) -> str:
-    """Run a synchronous Gemini API call."""
+    """Synchronous Gemini call — always uses API key."""
     model = genai.GenerativeModel(MODEL_NAME)
     response = model.generate_content(prompt)
     return response.text
 
 
 async def generate_keywords(brand_name: str) -> list:
-    """Ask Gemini 2.5 Flash to generate 5 iGaming search keywords."""
     prompt = (
         f"Generate exactly 5 Telegram search keywords for finding iGaming affiliate marketing groups "
         f"related to the brand or topic: '{brand_name}'. "
@@ -93,7 +96,6 @@ async def generate_keywords(brand_name: str) -> list:
 
 
 async def analyze_candidates(messages_list: list) -> list:
-    """Analyze Telegram messages with Gemini 2.5 Flash to find affiliate candidates."""
     if not messages_list:
         return []
 
