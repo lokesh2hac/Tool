@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from lib import telegram_client, gemini
 from lib.supabase_client import supabase
 
@@ -38,6 +39,7 @@ async def _get_client(phone: str):
 
 class SearchGroupsRequest(BaseModel):
     keyword: str
+    model: Optional[str] = gemini.DEFAULT_GEMINI_MODEL
 
 
 class MessagesRequest(BaseModel):
@@ -56,7 +58,7 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
 
     # Step 1: Gemini generates smart keywords
     try:
-        keywords = await gemini.generate_keywords(body.keyword)
+        keywords = await gemini.generate_keywords(body.keyword, body.model or gemini.DEFAULT_GEMINI_MODEL)
     except Exception:
         keywords = [body.keyword]
 

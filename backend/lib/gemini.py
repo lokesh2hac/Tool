@@ -233,7 +233,7 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str
 # ─────────────────────────────────────────
 # PUBLIC FUNCTIONS
 # ─────────────────────────────────────────
-async def generate_keywords(brand_name: str) -> dict:
+async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) -> dict:
     """
     Generate multi-strategy search keywords using Groq.
     Returns dict: {brand, affiliate, category, hinglish}
@@ -244,7 +244,7 @@ async def generate_keywords(brand_name: str) -> dict:
         loop = asyncio.get_event_loop()
         raw_text = await loop.run_in_executor(
             None,
-            functools.partial(_call_ai_sync, prompt, model=DEFAULT_GEMINI_MODEL),
+            functools.partial(_call_ai_sync, prompt, model=model),
         )
         raw = _strip_markdown(raw_text)
         keywords = json.loads(raw)

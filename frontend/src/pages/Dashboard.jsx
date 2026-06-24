@@ -23,12 +23,13 @@ export default function Dashboard({ showToast }) {
   const handleSearch = async (e) => {
     e.preventDefault()
     if (!keyword.trim()) return
+    const currentModel = getStoredModel()
     setLoadingSearch(true)
     setGroups([])
     setSelectedGroups([])
     setAiKeywords([])
     try {
-      const res = await api.post('/api/groups/search', { keyword })
+      const res = await api.post('/api/groups/search', { keyword, model: currentModel })
       const data = res.data || {}
       const foundGroups = data.groups || (Array.isArray(res.data) ? res.data : [])
       const keywords = data.keywords_used || []

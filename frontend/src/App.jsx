@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Candidates from './pages/Candidates'
 import Outreach from './pages/Outreach'
+import OutreachHistory from './pages/OutreachHistory'
 import ApiKeys from './pages/ApiKeys'
 import TopBar from './components/TopBar'
 import BottomNav from './components/BottomNav'
@@ -60,7 +61,7 @@ export default function App() {
           />
           <Route
             path="/outreach-history"
-            element={auth.logged_in ? <Outreach /> : <Navigate to="/" replace />}
+            element={auth.logged_in ? <OutreachHistory /> : <Navigate to="/" replace />}
           />
           <Route
             path="/api-keys"
