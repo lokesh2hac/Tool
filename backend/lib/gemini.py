@@ -408,3 +408,117 @@ async def analyze_candidates(
         )
     )
     return final[:15]
+
+
+# ================================================================
+# NEW: AUTO-SCAN FEATURE (job seekers detection)
+# ================================================================
+
+SEEKER_ANALYSIS_PROMPT = """You are a talent scout for **{brand_name}** – a leading Indian gaming/betting platform. We are hiring **affiliate agents and website promoters** on a **commission‑based** model.
+
+Analyze the given Telegram **group** messages and identify users who are **actively looking for affiliate marketing or website promoter jobs**. These are people seeking such positions, not those offering them.
+
+Strong signals:
+- "Looking for affiliate marketing work"
+- "Need website promoter job"
+- "I want to earn commission"
+- "Anyone hiring affiliate agents?"
+- "Seeking promotion work for gaming sites"
+- "I have experience in betting affiliate"
+- "Want to become a promoter"
+
+Scoring (0-10):
+- 9-10: Clearly states they are looking for work, includes contact info, Indian
+- 7-8: Expresses interest in earning through promotion, asks for opportunities
+- 6: Mentions earning or promotion but not explicitly seeking
+
+Mandatory: username must start with @ – otherwise skip.
+
+Input format:
+@username (Display Name): message text
+
+Output: JSON array of candidates (max 15), sorted by score descending.
+Each object:
+{{
+  "username": "@handle",
+  "display_name": "Name",
+  "score": 8,
+  "reason": "why they are a good candidate (seeking work)",
+  "sample_message": "exact message",
+  "is_indian_likely": true/false
+}}
+
+Return only the JSON array.
+
+Messages:
+{messages}
+"""
+
+
+async def analyze_seekers(
+    messages_list: List[Dict[str, Any]],
+    brand_name: str,
+    key_id: Optional[str] = None,
+    model: str = DEFAULT_GEMINI_MODEL,
+    chunk_size: int = 30,
+    delay_between_chunks: float = 0.5,
+) -> List[Dict[str, Any]]:
+    """
+    Identifies job seekers (people looking for affiliate/promoter work).
+    Uses SEEKER_ANALYSIS_PROMPT.
+    """
+    if not messages_list:
+        return []
+
+    display_brand = brand_name if brand_name else "the gaming platform"
+    all_candidates = []
+
+    for i in range(0, len(messages_list), chunk_size):
+        chunk = messages_list[i:i+chunk_size]
+        formatted_lines = []
+        for m in chunk:
+            if not m.get("text"):
+                continue
+            username = m.get("sender_username", "").strip()
+            sender = f"@{username}" if username else "@NoUsername"
+            name = m.get("sender_name", "Unknown")
+            msg = m["text"].replace('"', '\\"').replace('\n', '\\n')
+            formatted_lines.append(f"{sender} ({name}): {msg}")
+
+        if not formatted_lines:
+            continue
+
+        formatted = "\n".join(formatted_lines)
+        prompt = SEEKER_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
+
+        try:
+            raw_text = await _call_ai_async(prompt, key_id=key_id, model=model)
+            candidates = _extract_json(raw_text)
+            if isinstance(candidates, list):
+                filtered = [
+                    c for c in candidates
+                    if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
+                ]
+                all_candidates.extend(filtered)
+        except GeminiRateLimitError:
+            raise
+        except Exception as e:
+            # Log and continue
+            print(f"Seeker chunk {i//chunk_size + 1} failed: {e}")
+            continue
+
+        if i + chunk_size < len(messages_list):
+            await asyncio.sleep(delay_between_chunks)
+
+    # Deduplicate
+    unique = {}
+    for c in all_candidates:
+        username = c.get("username", "").strip()
+        if not username:
+            continue
+        if username not in unique or c.get("score", 0) > unique[username].get("score", 0):
+            unique[username] = c
+
+    final = list(unique.values())
+    final.sort(key=lambda x: (0 if x.get("is_indian_likely") else 1, -int(x.get("score", 0))))
+    return final[:15]
