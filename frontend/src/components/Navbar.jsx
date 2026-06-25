@@ -47,6 +47,7 @@ export default function Navbar({ auth, setAuth, showToast }) {
           {navLink('/candidates', '🎯 Candidates')}
           {navLink('/outreach', '📬 Outreach History')}
           {navLink('/api-keys', '🔑 API Keys')}
+          {navLink('/auto-scan', '🤖 Auto Scan')} {/* 👈 new */}
         </div>
 
         <div className="flex items-center gap-3">
