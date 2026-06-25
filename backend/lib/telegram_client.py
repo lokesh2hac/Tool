@@ -153,6 +153,14 @@ async def get_messages(client: TelegramClient, group_username: str, limit: int =
         raise RuntimeError(f"Failed to fetch messages: {str(e)}")
 
 
+# Alias for auto‑scan compatibility (same function, different name)
+async def get_group_messages(client: TelegramClient, group_username: str, limit: int = 100) -> dict:
+    """
+    Alias for get_messages – used by the auto‑scan feature.
+    """
+    return await get_messages(client, group_username, limit)
+
+
 async def send_message(client: TelegramClient, username: str, message: str):
     """Send a direct message to a Telegram user."""
     try:
