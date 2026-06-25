@@ -8,7 +8,8 @@ from lib import gemini, auto_scan
 from lib.supabase_client import supabase
 from lib.telegram_client import get_client_for_phone
 
-router = APIRouter(prefix="/auto-scan", tags=["Auto Scan"])
+# 👇 NO prefix here – it will be added in main.py
+router = APIRouter(tags=["Auto Scan"])
 
 
 def _require_session(request: Request):
@@ -51,7 +52,7 @@ async def _save_candidates(candidates: list):
 
 @router.get("")
 async def start_auto_scan(
-    request: Request,  # 👈 moved to first position
+    request: Request,
     brand_name: str = Query(..., description="Brand name to search for"),
     model: str = Query(gemini.DEFAULT_GEMINI_MODEL, description="AI model"),
     gemini_key_id: Optional[str] = Query(None, description="Gemini key ID from DB"),
