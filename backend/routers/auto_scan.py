@@ -49,13 +49,13 @@ async def _save_candidates(candidates: list):
             print(f"Failed to save candidate {c.get('username')}: {e}")
 
 
-@router.get("")  # 👈 changed from POST to GET
+@router.get("")
 async def start_auto_scan(
+    request: Request,  # 👈 moved to first position
     brand_name: str = Query(..., description="Brand name to search for"),
     model: str = Query(gemini.DEFAULT_GEMINI_MODEL, description="AI model"),
     gemini_key_id: Optional[str] = Query(None, description="Gemini key ID from DB"),
     gemini_api_key: Optional[str] = Query(None, description="Raw Gemini API key"),
-    request: Request,
 ):
     phone = _require_session(request)
     _resolve_gemini_key(gemini_key_id, gemini_api_key, model)
