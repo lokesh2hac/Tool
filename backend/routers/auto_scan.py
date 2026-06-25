@@ -1,8 +1,7 @@
 import json
 import asyncio
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 from typing import Optional
 
 from lib import gemini, auto_scan
@@ -10,13 +9,6 @@ from lib.supabase_client import supabase
 from lib.telegram_client import get_client_for_phone
 
 router = APIRouter(prefix="/auto-scan", tags=["Auto Scan"])
-
-
-class AutoScanRequest(BaseModel):
-    brand_name: str
-    gemini_key_id: Optional[str] = None
-    gemini_api_key: Optional[str] = None
-    model: str = gemini.DEFAULT_GEMINI_MODEL
 
 
 def _require_session(request: Request):
@@ -39,7 +31,6 @@ def _resolve_gemini_key(gemini_key_id: Optional[str], gemini_api_key: Optional[s
             pass
 
 
-# 👇 Helper to save candidates to DB
 async def _save_candidates(candidates: list):
     """Insert candidates into the candidates table."""
     for c in candidates:
@@ -51,19 +42,23 @@ async def _save_candidates(candidates: list):
                 "ai_score": int(c.get("score", 0)),
                 "ai_reason": c.get("reason", ""),
                 "status": "new",
-                "group_id": None,  # auto-scan doesn't have a single group
-                "source": "auto_scan",  # optional – add this column if needed
+                "group_id": None,
             }
-            # Upsert to avoid duplicates (if constraint exists) else insert
             supabase.table("candidates").insert(row).execute()
         except Exception as e:
             print(f"Failed to save candidate {c.get('username')}: {e}")
 
 
-@router.post("")
-async def start_auto_scan(body: AutoScanRequest, request: Request):
+@router.get("")  # 👈 changed from POST to GET
+async def start_auto_scan(
+    brand_name: str = Query(..., description="Brand name to search for"),
+    model: str = Query(gemini.DEFAULT_GEMINI_MODEL, description="AI model"),
+    gemini_key_id: Optional[str] = Query(None, description="Gemini key ID from DB"),
+    gemini_api_key: Optional[str] = Query(None, description="Raw Gemini API key"),
+    request: Request,
+):
     phone = _require_session(request)
-    _resolve_gemini_key(body.gemini_key_id, body.gemini_api_key, body.model)
+    _resolve_gemini_key(gemini_key_id, gemini_api_key, model)
 
     # Get Telegram client
     try:
@@ -81,18 +76,16 @@ async def start_auto_scan(body: AutoScanRequest, request: Request):
         async def progress_callback(update):
             await queue.put(update)
 
-        # Launch the scan in the background, passing the save callback
         asyncio.create_task(
             auto_scan.auto_scan(
                 client=client,
-                brand_name=body.brand_name,
+                brand_name=brand_name,
                 duration_seconds=300,
                 progress_callback=progress_callback,
-                save_callback=_save_candidates,  # 👈 candidates saved here
+                save_callback=_save_candidates,
             )
         )
 
-        # Stream events until 'complete'
         while True:
             try:
                 update = await asyncio.wait_for(queue.get(), timeout=10.0)
