@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from routers import auth, groups, candidates, outreach, api_keys
-from routers import auto_scan  # 👈 new
+from routers import auto_scan
+from routers import sessions  # 👈 add this
 
 load_dotenv()
 
@@ -14,15 +15,13 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     sys.exit("ERROR: SECRET_KEY environment variable is not set.")
 
-# ALLOWED_ORIGINS: comma-separated list
-# Set in Render env vars: https://your-frontend.onrender.com
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://localhost:3000"
 ).split(",")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
 
-IS_PRODUCTION = os.getenv("RENDER", "") != ""  # Render sets RENDER=true automatically
+IS_PRODUCTION = os.getenv("RENDER", "") != ""
 
 app = FastAPI(title="ACE2KING Candidate Finder", version="1.0.0")
 
@@ -48,8 +47,10 @@ app.include_router(groups.router, prefix="/api/groups", tags=["groups"])
 app.include_router(candidates.router, prefix="/api/candidates", tags=["candidates"])
 app.include_router(outreach.router, prefix="/api/outreach", tags=["outreach"])
 app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
-app.include_router(auto_scan.router, prefix="/api/auto-scan", tags=["auto-scan"])  # 👈 new
+app.include_router(auto_scan.router, prefix="/api/auto-scan", tags=["auto-scan"])
 
+# 👇 Add this line
+app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 
 @app.get("/api/health")
 async def health():
