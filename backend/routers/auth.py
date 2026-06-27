@@ -22,19 +22,24 @@ class VerifyPasswordRequest(BaseModel):
     password: str
 
 
-async def _save_session(phone: str, session_string: str, username: str):
-    """Upsert telegram session to Supabase."""
+async def _save_session(phone: str, session_string: str, username: str, app_user_phone: str):
+    """
+    Upsert telegram session to Supabase.
+    Now includes app_user_phone so we can link sessions to the logged‑in user.
+    """
     existing = supabase.table("telegram_sessions").select("id").eq("phone", phone).execute()
     if existing.data:
         supabase.table("telegram_sessions").update({
             "session_string": session_string,
             "username": username,
+            "app_user_phone": app_user_phone,  # 👈 ensure it's set
         }).eq("phone", phone).execute()
     else:
         supabase.table("telegram_sessions").insert({
             "phone": phone,
             "session_string": session_string,
             "username": username,
+            "app_user_phone": app_user_phone,  # 👈 new field
         }).execute()
 
 
@@ -82,12 +87,16 @@ async def api_verify_code(body: VerifyCodeRequest, request: Request):
         else:
             raise HTTPException(status_code=400, detail=f"Login failed: {error_msg}")
 
+    # Get the app user's phone from the session (it's the same as body.phone for first login)
+    app_user_phone = body.phone  # after login, we store this in session
     try:
-        await _save_session(body.phone, session_string, username)
+        await _save_session(body.phone, session_string, username, app_user_phone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save session: {str(e)}")
 
     request.session["phone"] = body.phone
+    # Also set the active Telegram phone to this one by default
+    request.session["active_telegram_phone"] = body.phone
     return {"success": True, "requires_password": False, "username": username or body.phone}
 
 
@@ -108,12 +117,14 @@ async def api_verify_password(body: VerifyPasswordRequest, request: Request):
         else:
             raise HTTPException(status_code=400, detail=f"2FA login failed: {error_msg}")
 
+    app_user_phone = body.phone
     try:
-        await _save_session(body.phone, session_string, username)
+        await _save_session(body.phone, session_string, username, app_user_phone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save session: {str(e)}")
 
     request.session["phone"] = body.phone
+    request.session["active_telegram_phone"] = body.phone
     return {"success": True, "username": username or body.phone}
 
 
