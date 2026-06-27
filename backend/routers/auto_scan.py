@@ -8,16 +8,13 @@ from lib import gemini, auto_scan
 from lib.supabase_client import supabase
 from lib.telegram_client import get_client_for_phone
 
-# 👇 NO prefix here – it will be added in main.py
 router = APIRouter(tags=["Auto Scan"])
-
 
 def _require_session(request: Request):
     phone = request.session.get("phone")
     if not phone:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return phone
-
 
 def _resolve_gemini_key(gemini_key_id: Optional[str], gemini_api_key: Optional[str], model: str):
     if gemini_api_key:
@@ -31,9 +28,7 @@ def _resolve_gemini_key(gemini_key_id: Optional[str], gemini_api_key: Optional[s
         except Exception:
             pass
 
-
 async def _save_candidates(candidates: list):
-    """Insert candidates into the candidates table."""
     for c in candidates:
         try:
             row = {
@@ -49,7 +44,6 @@ async def _save_candidates(candidates: list):
         except Exception as e:
             print(f"Failed to save candidate {c.get('username')}: {e}")
 
-
 @router.get("")
 async def start_auto_scan(
     request: Request,
@@ -58,22 +52,29 @@ async def start_auto_scan(
     gemini_key_id: Optional[str] = Query(None, description="Gemini key ID from DB"),
     gemini_api_key: Optional[str] = Query(None, description="Raw Gemini API key"),
 ):
-    phone = _require_session(request)
+    app_phone = _require_session(request)
     _resolve_gemini_key(gemini_key_id, gemini_api_key, model)
 
-    # Get Telegram client
+    # 👇 Use the active Telegram phone if set, otherwise fallback to app phone
+    active_phone = request.session.get("active_telegram_phone", app_phone)
+
     try:
-        res = supabase.table("telegram_sessions").select("session_string").eq("phone", phone).execute()
+        res = supabase.table("telegram_sessions") \
+            .select("session_string") \
+            .eq("phone", active_phone) \
+            .execute()
         if not res.data:
-            raise HTTPException(status_code=401, detail="Telegram session not found. Please log in again.")
+            raise HTTPException(
+                status_code=401,
+                detail=f"Telegram session for {active_phone} not found. Please log in again."
+            )
         session_string = res.data[0]["session_string"]
-        client = await get_client_for_phone(phone, session_string)
+        client = await get_client_for_phone(active_phone, session_string)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to connect to Telegram: {str(e)}")
 
     async def event_generator():
         queue = asyncio.Queue()
-
         async def progress_callback(update):
             await queue.put(update)
 
