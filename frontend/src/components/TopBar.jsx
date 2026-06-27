@@ -10,9 +10,45 @@ export default function TopBar({ auth, setAuth, showToast }) {
   const [showModels, setShowModels] = useState(false)
   const [selectedModel, setSelectedModel] = useState(() => getStoredModel())
 
+  // Session switcher state
+  const [sessions, setSessions] = useState([])
+  const [activeSession, setActiveSession] = useState('')
+  const [loadingSessions, setLoadingSessions] = useState(false)
+
   useEffect(() => {
     setStoredModel(selectedModel || DEFAULT_MODEL)
   }, [selectedModel])
+
+  // Fetch sessions and active one on mount
+  useEffect(() => {
+    const fetchSessions = async () => {
+      try {
+        setLoadingSessions(true)
+        const [listRes, activeRes] = await Promise.all([
+          api.get('/api/sessions'),
+          api.get('/api/sessions/active'),
+        ])
+        setSessions(listRes.data || [])
+        setActiveSession(activeRes.data?.active || '')
+      } catch (err) {
+        // Silently fail – sessions are optional
+      } finally {
+        setLoadingSessions(false)
+      }
+    }
+    fetchSessions()
+  }, [])
+
+  const handleSwitchSession = async (phone) => {
+    try {
+      await api.post('/api/sessions/active', { phone })
+      setActiveSession(phone)
+      showToast(`Switched to ${phone}`, 'success')
+      setMenuOpen(false)
+    } catch (err) {
+      showToast('Failed to switch session', 'error')
+    }
+  }
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -67,7 +103,8 @@ export default function TopBar({ auth, setAuth, showToast }) {
           </button>
 
           {menuOpen && (
-            <div className="absolute right-0 mt-2 w-72 rounded-xl border border-gray-700 bg-[#1a2035] shadow-xl overflow-hidden">
+            <div className="absolute right-0 mt-2 w-80 rounded-xl border border-gray-700 bg-[#1a2035] shadow-xl overflow-hidden">
+              {/* API Keys */}
               <button
                 type="button"
                 onClick={() => {
@@ -80,6 +117,7 @@ export default function TopBar({ auth, setAuth, showToast }) {
                 🔑 API Keys
               </button>
 
+              {/* Model switcher */}
               <button
                 type="button"
                 onClick={() => setShowModels(value => !value)}
@@ -113,11 +151,48 @@ export default function TopBar({ auth, setAuth, showToast }) {
                 </div>
               )}
 
+              {/* Session Switcher */}
+              <div className="border-t border-gray-700">
+                <div className="px-4 py-3">
+                  <p className="text-xs font-medium text-gray-400 mb-2">📱 Active Telegram Session</p>
+                  {loadingSessions ? (
+                    <div className="flex items-center gap-2 text-gray-500 text-sm">
+                      <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                      Loading...
+                    </div>
+                  ) : sessions.length === 0 ? (
+                    <p className="text-sm text-gray-500">No sessions saved yet.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {sessions.map(s => (
+                        <button
+                          key={s.phone}
+                          type="button"
+                          onClick={() => handleSwitchSession(s.phone)}
+                          className={`w-full text-left text-sm px-3 py-2 rounded-lg transition-colors flex items-center justify-between ${
+                            s.phone === activeSession
+                              ? 'bg-amber-500/10 text-amber-400'
+                              : 'text-gray-300 hover:bg-white/5'
+                          }`}
+                        >
+                          <span>{s.phone}</span>
+                          {s.phone === activeSession && (
+                            <span className="text-amber-400 text-xs">● Active</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* User info */}
               <div className="border-t border-gray-700 px-4 py-3 text-sm text-gray-500">
                 <p>{auth.username ? `@${auth.username}` : '@username'}</p>
                 <p>{auth.phone || 'No phone'}</p>
               </div>
 
+              {/* Logout */}
               <button
                 type="button"
                 onClick={handleLogout}
