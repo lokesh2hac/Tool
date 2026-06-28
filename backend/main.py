@@ -7,7 +7,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from routers import auth, groups, candidates, outreach, api_keys
 from routers import auto_scan
-from routers import sessions  # 👈 add this
+from routers import sessions
+from routers import group_posts  # 👈 new
 
 load_dotenv()
 
@@ -48,9 +49,8 @@ app.include_router(candidates.router, prefix="/api/candidates", tags=["candidate
 app.include_router(outreach.router, prefix="/api/outreach", tags=["outreach"])
 app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
 app.include_router(auto_scan.router, prefix="/api/auto-scan", tags=["auto-scan"])
-
-# 👇 Add this line
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
+app.include_router(group_posts.router, prefix="/api/group-posts", tags=["group-posts"])  # 👈 new
 
 @app.get("/api/health")
 async def health():
