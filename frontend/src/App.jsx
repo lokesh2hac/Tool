@@ -7,7 +7,8 @@ import Candidates from './pages/Candidates'
 import Outreach from './pages/Outreach'
 import OutreachHistory from './pages/OutreachHistory'
 import ApiKeys from './pages/ApiKeys'
-import AutoScanPage from './pages/AutoScanPage'  // 👈 new import
+import AutoScanPage from './pages/AutoScanPage'
+import Groups from './pages/Groups'  // 👈 new import
 import TopBar from './components/TopBar'
 import BottomNav from './components/BottomNav'
 import Toast from './components/Toast'
@@ -68,10 +69,14 @@ export default function App() {
             path="/api-keys"
             element={auth.logged_in ? <ApiKeys showToast={showToast} /> : <Navigate to="/" replace />}
           />
-          {/* 👇 New route for auto-scan */}
           <Route
             path="/auto-scan"
             element={auth.logged_in ? <AutoScanPage showToast={showToast} /> : <Navigate to="/" replace />}
+          />
+          {/* 👇 New route for Groups */}
+          <Route
+            path="/groups"
+            element={auth.logged_in ? <Groups showToast={showToast} /> : <Navigate to="/" replace />}
           />
           {/* Catch-all — redirect unknown paths to home */}
           <Route path="*" element={<Navigate to="/" replace />} />
