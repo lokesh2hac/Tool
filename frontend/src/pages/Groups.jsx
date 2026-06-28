@@ -21,16 +21,15 @@ export default function Groups({ showToast }) {
   const [expandedGroup, setExpandedGroup] = useState(null)
   const [groupMessages, setGroupMessages] = useState({})
   const [permissions, setPermissions] = useState({})
-  // 👇 new state for results
   const [sendResults, setSendResults] = useState([])
   const [showResults, setShowResults] = useState(false)
+  const [joinFirst, setJoinFirst] = useState(false)  // 👈 new
 
   const fetchGroups = async () => {
     setLoading(true)
     try {
       const data = await getScannedGroups()
       setGroups(data || [])
-      // Default select all
       const sel = {}
       data.forEach(g => sel[g.group_username] = true)
       setSelected(sel)
@@ -81,8 +80,7 @@ export default function Groups({ showToast }) {
     setSendResults([])
     setShowResults(false)
     try {
-      // 👇 pass brandName
-      const result = await sendPostToGroups(selectedUsernames, message, 2.0, brandName)
+      const result = await sendPostToGroups(selectedUsernames, message, 2.0, brandName, joinFirst)
       const success = result.results.filter(r => r.success).length
       setSendResults(result.results)
       setShowResults(true)
@@ -242,7 +240,6 @@ export default function Groups({ showToast }) {
           </div>
         )}
 
-        {/* Expanded messages */}
         {expandedGroup && groupMessages[expandedGroup] && (
           <div className="mt-3 p-3 bg-gray-900/50 rounded-lg max-h-60 overflow-y-auto">
             <p className="text-xs font-semibold text-gray-400 mb-2">
@@ -298,6 +295,20 @@ export default function Groups({ showToast }) {
         </p>
       </div>
 
+      {/* 👇 New: Join & Post checkbox */}
+      <div className="flex items-center gap-2 mt-3 mb-4">
+        <input
+          type="checkbox"
+          checked={joinFirst}
+          onChange={(e) => setJoinFirst(e.target.checked)}
+          className="w-4 h-4 accent-amber-500"
+          disabled={sending}
+        />
+        <label className="text-sm text-gray-300">
+          Join group before posting (if not already a member)
+        </label>
+      </div>
+
       {/* Send button */}
       <button
         onClick={handleSend}
@@ -307,7 +318,7 @@ export default function Groups({ showToast }) {
         {sending ? '📤 Sending...' : '📤 Send Post to Selected Groups'}
       </button>
 
-      {/* 👇 Results section */}
+      {/* Results section */}
       {showResults && sendResults.length > 0 && (
         <div className="mt-4 bg-surface border border-gray-800 rounded-xl p-4 max-h-60 overflow-y-auto">
           <h3 className="font-semibold text-white mb-2">📋 Send Results</h3>
