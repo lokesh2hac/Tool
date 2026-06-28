@@ -53,11 +53,12 @@ export const checkGroupPermissions = (groupUsername) =>
   api.get('/api/group-posts/check-permissions', { params: { group_username: groupUsername } })
     .then(res => res.data.can_send)
 
-// Send the recruitment post to selected groups with brand_name
-export const sendPostToGroups = (groupUsernames, message, delayBetween = 2.0, brandName = 'ACE2KING') =>
+// Send the recruitment post to selected groups with join_first option
+export const sendPostToGroups = (groupUsernames, message, delayBetween = 2.0, brandName = 'ACE2KING', joinFirst = false) =>
   api.post('/api/group-posts/send', {
     group_usernames: groupUsernames,
     message,
     delay_between: delayBetween,
-    brand_name: brandName   // 👈 added
+    brand_name: brandName,
+    join_first: joinFirst
   }).then(res => res.data)
