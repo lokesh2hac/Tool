@@ -167,3 +167,38 @@ async def send_message(client: TelegramClient, username: str, message: str):
         await client.send_message(username, message)
     except Exception as e:
         raise RuntimeError(f"Failed to send message: {str(e)}")
+
+
+# ================================================================
+# NEW FUNCTIONS for Group Posting
+# ================================================================
+
+async def can_send_messages(client: TelegramClient, group_username: str) -> bool:
+    """
+    Check if the group allows sending messages (not restricted).
+    Returns True if the user is likely able to post, False otherwise.
+    """
+    try:
+        entity = await client.get_entity(group_username)
+        # For groups/channels, check if sending is restricted
+        # default_banned_rights is a ChatBannedRights object.
+        if hasattr(entity, 'default_banned_rights') and entity.default_banned_rights:
+            # If send_messages is True in the banned rights, sending is prohibited.
+            if entity.default_banned_rights.send_messages:
+                return False
+        # Also check if we are a member? Not strictly required for public groups,
+        # but if the group has 'join to send' we might need to join first.
+        # We'll attempt to send a dummy message? That might be invasive.
+        # For now, we'll rely on the banned rights.
+        return True
+    except Exception:
+        return False
+
+
+async def send_message_to_group(client: TelegramClient, group_username: str, message: str):
+    """Send a message to a public group by username."""
+    try:
+        entity = await client.get_entity(group_username)
+        await client.send_message(entity, message)
+    except Exception as e:
+        raise RuntimeError(f"Failed to send message to {group_username}: {str(e)}")
