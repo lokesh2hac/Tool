@@ -11,7 +11,7 @@ const api = axios.create({
 
 export default api
 
-// 👇 New: Start auto‑scan with Server‑Sent Events
+// 👇 Start auto‑scan with Server‑Sent Events
 export const startAutoScan = (brandName, geminiKeyId = null, geminiApiKey = null, model = "gemini-2.5-flash") => {
   const params = new URLSearchParams()
   params.append("brand_name", brandName)
@@ -22,3 +22,41 @@ export const startAutoScan = (brandName, geminiKeyId = null, geminiApiKey = null
   const url = `${baseURL}/api/auto-scan?${params.toString()}`
   return new EventSource(url, { withCredentials: true })
 }
+
+// ================================================================
+// GROUP MANAGEMENT
+// ================================================================
+
+// Get all scanned groups for the current user
+export const getScannedGroups = () => 
+  api.get('/api/groups').then(res => res.data)
+
+// Scan new groups by keyword (uses AI to expand keywords)
+export const scanGroups = (keyword, model = "gemini-2.5-flash") =>
+  api.post('/api/groups/search', { keyword, model }).then(res => res.data)
+
+// Fetch messages from a specific group
+export const getGroupMessages = (groupUsername) =>
+  api.post('/api/groups/messages', { group_username: groupUsername }).then(res => res.data)
+
+// ================================================================
+// RECRUITMENT POSTS
+// ================================================================
+
+// Generate a unique recruitment post using AI
+export const generateRecruitmentPost = (brandName = 'ACE2KING') =>
+  api.get('/api/group-posts/generate-message', { params: { brand_name: brandName } })
+    .then(res => res.data.message)
+
+// Check if the group allows sending messages (restricted?)
+export const checkGroupPermissions = (groupUsername) =>
+  api.get('/api/group-posts/check-permissions', { params: { group_username: groupUsername } })
+    .then(res => res.data.can_send)
+
+// Send the recruitment post to selected groups
+export const sendPostToGroups = (groupUsernames, message, delayBetween = 2.0) =>
+  api.post('/api/group-posts/send', {
+    group_usernames: groupUsernames,
+    message,
+    delay_between: delayBetween
+  }).then(res => res.data)
