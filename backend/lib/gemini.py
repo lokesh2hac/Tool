@@ -29,7 +29,6 @@ _active_gemini_key: str = ""
 _active_gemini_model: str = DEFAULT_GEMINI_MODEL
 
 # Global semaphore to limit concurrent AI requests across the whole app
-# Set to 3 to allow a few parallel calls but not flood the API
 _AI_SEMAPHORE = asyncio.Semaphore(3)
 
 
@@ -58,7 +57,7 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS (unchanged – kept short for brevity)
+# PROMPTS
 # -------------------------------------------------------------------
 KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
@@ -139,6 +138,63 @@ Messages:
 """
 
 
+SEEKER_ANALYSIS_PROMPT = """You are a talent scout for **{brand_name}** – a leading Indian gaming/betting platform. We are hiring **affiliate agents and website promoters** on a **commission‑based** model.
+
+Analyze the given Telegram **group** messages and identify users who are **actively looking for affiliate marketing or website promoter jobs**. These are people seeking such positions, not those offering them.
+
+Strong signals:
+- "Looking for affiliate marketing work"
+- "Need website promoter job"
+- "I want to earn commission"
+- "Anyone hiring affiliate agents?"
+- "Seeking promotion work for gaming sites"
+- "I have experience in betting affiliate"
+- "Want to become a promoter"
+
+Scoring (0-10):
+- 9-10: Clearly states they are looking for work, includes contact info, Indian
+- 7-8: Expresses interest in earning through promotion, asks for opportunities
+- 6: Mentions earning or promotion but not explicitly seeking
+
+Mandatory: username must start with @ – otherwise skip.
+
+Input format:
+@username (Display Name): message text
+
+Output: JSON array of candidates (max 15), sorted by score descending.
+Each object:
+{{
+  "username": "@handle",
+  "display_name": "Name",
+  "score": 8,
+  "reason": "why they are a good candidate (seeking work)",
+  "sample_message": "exact message",
+  "is_indian_likely": true/false
+}}
+
+Return only the JSON array.
+
+Messages:
+{messages}
+"""
+
+
+# NEW: Recruitment post prompt
+RECRUITMENT_POST_PROMPT = """You are a recruitment specialist for {brand_name}, a leading Indian gaming platform. We are hiring Affiliate Marketing Partners and Website Promoters.
+
+Create a compelling Telegram recruitment post (max 300 characters) that attracts potential affiliates and promoters.
+
+Key points:
+- Commission-based with up to 50% revenue share.
+- Monthly payouts, USDT withdrawals.
+- Looking for Telegram group owners, YouTubers, influencers, website owners, SEO experts.
+- Target: Indian audience.
+- Do NOT include any @username (to avoid spam filters).
+- Each post should be unique – vary the wording.
+
+Create a recruitment post:"""
+
+
 # -------------------------------------------------------------------
 # JSON EXTRACTION
 # -------------------------------------------------------------------
@@ -196,16 +252,16 @@ def _extract_json(text: str) -> Any:
 
 
 # -------------------------------------------------------------------
-# AI CALLS with SEMAPHORE and RETRIES
+# AI CALLS with SEMAPHORE and RETRIES (updated to accept temperature)
 # -------------------------------------------------------------------
-def _call_groq_sync(prompt: str) -> str:
+def _call_groq_sync(prompt: str, temperature: float = 0.2) -> str:
     payload = {
         "model": GROQ_MODEL,
         "messages": [
             {"role": "system", "content": "Return ONLY valid JSON. Escape all double quotes and newlines."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.2,
+        "temperature": temperature,
         "max_tokens": 4096,
     }
     with httpx.Client(timeout=60) as client:
@@ -215,7 +271,7 @@ def _call_groq_sync(prompt: str) -> str:
         return resp.json()["choices"][0]["message"]["content"]
 
 
-def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
+def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
     api_key = _active_gemini_key or GEMINI_API_KEY
     model_name = (model or _active_gemini_model or DEFAULT_GEMINI_MODEL).strip()
     if not api_key:
@@ -223,7 +279,7 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096},
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": 4096},
         "systemInstruction": {"parts": [{"text": "Return ONLY valid JSON. Escape all double quotes and newlines."}]}
     }
     url = f"{_get_gemini_url(model_name)}?key={api_key}"
@@ -263,7 +319,7 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
     raise GeminiUnavailableError("Gemini unavailable")
 
 
-async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
+async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
     """
     Wrapper that uses a global semaphore to limit concurrency.
     """
@@ -272,23 +328,23 @@ async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optio
         # Run the sync AI call in a thread pool
         return await loop.run_in_executor(
             None,
-            functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model)
+            functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model, temperature=temperature)
         )
 
 
-def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None) -> str:
+def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
     """
     Try Gemini; on any error (except 429) fallback to Groq.
     """
     gemini_key = _active_gemini_key or GEMINI_API_KEY
     if gemini_key:
         try:
-            return _call_gemini_sync(prompt, key_id=key_id, model=model)
+            return _call_gemini_sync(prompt, key_id=key_id, model=model, temperature=temperature)
         except GeminiRateLimitError:
             raise
         except Exception:
             pass
-    return _call_groq_sync(prompt)
+    return _call_groq_sync(prompt, temperature=temperature)
 
 
 # -------------------------------------------------------------------
@@ -339,8 +395,8 @@ async def analyze_candidates(
     brand_name: Optional[str] = None,
     key_id: Optional[str] = None,
     model: str = DEFAULT_GEMINI_MODEL,
-    chunk_size: int = 30,           # reduced from 50 to lower per-call load
-    delay_between_chunks: float = 0.5,  # small pause between chunks
+    chunk_size: int = 30,
+    delay_between_chunks: float = 0.5,
 ) -> List[Dict[str, Any]]:
     """
     Chunked analysis with rate control:
@@ -382,16 +438,14 @@ async def analyze_candidates(
                 ]
                 all_candidates.extend(filtered)
         except GeminiRateLimitError:
-            raise  # let caller handle
+            raise
         except Exception as e:
             print(f"Chunk {i//chunk_size + 1} failed: {e}")
             continue
 
-        # Pause between chunks to smooth out request rate
         if i + chunk_size < len(messages_list):
             await asyncio.sleep(delay_between_chunks)
 
-    # Deduplicate and sort
     unique = {}
     for c in all_candidates:
         username = c.get("username", "").strip()
@@ -408,51 +462,6 @@ async def analyze_candidates(
         )
     )
     return final[:15]
-
-
-# ================================================================
-# NEW: AUTO-SCAN FEATURE (job seekers detection)
-# ================================================================
-
-SEEKER_ANALYSIS_PROMPT = """You are a talent scout for **{brand_name}** – a leading Indian gaming/betting platform. We are hiring **affiliate agents and website promoters** on a **commission‑based** model.
-
-Analyze the given Telegram **group** messages and identify users who are **actively looking for affiliate marketing or website promoter jobs**. These are people seeking such positions, not those offering them.
-
-Strong signals:
-- "Looking for affiliate marketing work"
-- "Need website promoter job"
-- "I want to earn commission"
-- "Anyone hiring affiliate agents?"
-- "Seeking promotion work for gaming sites"
-- "I have experience in betting affiliate"
-- "Want to become a promoter"
-
-Scoring (0-10):
-- 9-10: Clearly states they are looking for work, includes contact info, Indian
-- 7-8: Expresses interest in earning through promotion, asks for opportunities
-- 6: Mentions earning or promotion but not explicitly seeking
-
-Mandatory: username must start with @ – otherwise skip.
-
-Input format:
-@username (Display Name): message text
-
-Output: JSON array of candidates (max 15), sorted by score descending.
-Each object:
-{{
-  "username": "@handle",
-  "display_name": "Name",
-  "score": 8,
-  "reason": "why they are a good candidate (seeking work)",
-  "sample_message": "exact message",
-  "is_indian_likely": true/false
-}}
-
-Return only the JSON array.
-
-Messages:
-{messages}
-"""
 
 
 async def analyze_seekers(
@@ -503,14 +512,12 @@ async def analyze_seekers(
         except GeminiRateLimitError:
             raise
         except Exception as e:
-            # Log and continue
             print(f"Seeker chunk {i//chunk_size + 1} failed: {e}")
             continue
 
         if i + chunk_size < len(messages_list):
             await asyncio.sleep(delay_between_chunks)
 
-    # Deduplicate
     unique = {}
     for c in all_candidates:
         username = c.get("username", "").strip()
@@ -522,3 +529,25 @@ async def analyze_seekers(
     final = list(unique.values())
     final.sort(key=lambda x: (0 if x.get("is_indian_likely") else 1, -int(x.get("score", 0))))
     return final[:15]
+
+
+# ================================================================
+# NEW: Recruitment Post Generation
+# ================================================================
+
+async def generate_recruitment_post(brand_name: str = "ACE2KING") -> str:
+    """
+    Generate a unique recruitment post using AI (higher temperature for variety).
+    """
+    prompt = RECRUITMENT_POST_PROMPT.format(brand_name=brand_name)
+    try:
+        raw = await _call_ai_async(prompt, temperature=0.8)  # higher temp for uniqueness
+        # Clean up: remove any extra quotes or markdown
+        raw = raw.strip()
+        # If the response is wrapped in quotes, remove them
+        if raw.startswith('"') and raw.endswith('"'):
+            raw = raw[1:-1]
+        return raw
+    except Exception:
+        # Fallback generic message
+        return f"🚀 Join {brand_name} as an Affiliate Partner! Earn up to 50% revenue share, monthly USDT payouts. We're looking for Telegram group owners, YouTubers, influencers, and website owners. DM for details!"
