@@ -57,18 +57,58 @@ class SendPostRequest(BaseModel):
     group_usernames: List[str]
     message: str
     delay_between: float = 2.0
+    brand_name: Optional[str] = None   # 👈 added
 
 @router.post("/send")
 async def send_posts_to_groups(body: SendPostRequest, request: Request):
-    """Send the recruitment post to selected groups."""
+    """Send the recruitment post to selected groups and log each attempt."""
     _require_session(request)
     client = await _get_client(request)
+    phone = _get_active_phone(request)
     results = []
+
     for username in body.group_usernames:
         try:
             await telegram_client.send_message_to_group(client, username, body.message)
             results.append({"group": username, "success": True})
+            status = "success"
+            error = None
         except Exception as e:
             results.append({"group": username, "success": False, "error": str(e)})
+            status = "failed"
+            error = str(e)
+
+        # Save log to database
+        try:
+            supabase.table("group_post_logs").insert({
+                "session_phone": phone,
+                "group_username": username,
+                "message": body.message[:300],
+                "status": status,
+                "error": error,
+                "brand_name": body.brand_name
+            }).execute()
+        except Exception as log_err:
+            print(f"Failed to save log: {log_err}")
+
         await asyncio.sleep(body.delay_between)
+
     return {"results": results}
+
+# ================================================================
+# Optional: History endpoint
+# ================================================================
+@router.get("/history")
+async def get_post_history(request: Request, limit: int = Query(50, description="Max logs to return")):
+    """View the history of sent posts for the active user."""
+    phone = _get_active_phone(request)
+    try:
+        result = supabase.table("group_post_logs") \
+            .select("*") \
+            .eq("session_phone", phone) \
+            .order("sent_at", desc=True) \
+            .limit(limit) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
