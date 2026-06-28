@@ -62,7 +62,7 @@ async def list_scanned_groups(request: Request):
         result = supabase.table("scanned_groups") \
             .select("*") \
             .eq("session_phone", phone) \
-            .order("created_at", desc=True) \
+            .order("scanned_at", desc=True) \   # ✅ FIXED: use scanned_at
             .execute()
         return result.data or []
     except Exception as e:
