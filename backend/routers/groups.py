@@ -8,11 +8,17 @@ router = APIRouter()
 
 
 def _require_phone(request: Request) -> str:
-    """Get phone from session. Raise 401 if not logged in."""
+    """Get app phone from session. Raise 401 if not logged in."""
     phone = request.session.get("phone")
     if not phone:
         raise HTTPException(status_code=401, detail="Not authenticated. Please login again.")
     return phone
+
+
+def _get_active_phone(request: Request) -> str:
+    """Get the active Telegram phone (from session) or fallback to app phone."""
+    app_phone = _require_phone(request)
+    return request.session.get("active_telegram_phone", app_phone)
 
 
 async def _get_client(phone: str):
@@ -30,7 +36,7 @@ async def _get_client(phone: str):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
     if not result.data:
-        raise HTTPException(status_code=401, detail="Session not found. Please login again.")
+        raise HTTPException(status_code=401, detail=f"Session not found for {phone}. Please login again.")
 
     session_string = result.data[0]["session_string"]
     client = await telegram_client.get_client_for_phone(phone, session_string)
@@ -46,6 +52,23 @@ class MessagesRequest(BaseModel):
     group_username: str
 
 
+@router.get("")
+async def list_scanned_groups(request: Request):
+    """
+    List all groups previously scanned by this user (linked to active phone).
+    """
+    phone = _get_active_phone(request)
+    try:
+        result = supabase.table("scanned_groups") \
+            .select("*") \
+            .eq("session_phone", phone) \
+            .order("created_at", desc=True) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
 @router.post("/search")
 async def search_groups(body: SearchGroupsRequest, request: Request):
     """
@@ -53,7 +76,7 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
     2. Telegram searches each keyword for public groups
     3. Results are deduplicated and returned with keywords_used so frontend can show them
     """
-    phone = _require_phone(request)
+    phone = _get_active_phone(request)
     client = await _get_client(phone)
 
     # Step 1: Gemini generates smart keywords
@@ -77,19 +100,33 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
         except Exception:
             continue
 
-    # Step 3: Save to Supabase and attach IDs
+    # Step 3: Save to Supabase (upsert to avoid duplicates) and attach IDs
     saved = []
     for g in all_groups:
         try:
-            res = supabase.table("scanned_groups").insert({
-                "session_phone": phone,
-                "group_username": g.get("group_username") or "",
-                "group_title": g.get("group_title", ""),
-                "member_count": g.get("member_count", 0),
-                "keyword": body.keyword,
-            }).execute()
-            if res.data:
-                g["id"] = res.data[0]["id"]
+            # Check if already exists for this user
+            existing = supabase.table("scanned_groups") \
+                .select("id") \
+                .eq("session_phone", phone) \
+                .eq("group_username", g.get("group_username") or "") \
+                .execute()
+            if existing.data:
+                g["id"] = existing.data[0]["id"]
+                # Optionally update member_count
+                supabase.table("scanned_groups") \
+                    .update({"member_count": g.get("member_count", 0)}) \
+                    .eq("id", existing.data[0]["id"]) \
+                    .execute()
+            else:
+                res = supabase.table("scanned_groups").insert({
+                    "session_phone": phone,
+                    "group_username": g.get("group_username") or "",
+                    "group_title": g.get("group_title", ""),
+                    "member_count": g.get("member_count", 0),
+                    "keyword": body.keyword,
+                }).execute()
+                if res.data:
+                    g["id"] = res.data[0]["id"]
         except Exception:
             pass
         saved.append(g)
@@ -103,7 +140,7 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
 
 @router.post("/messages")
 async def get_messages(body: MessagesRequest, request: Request):
-    phone = _require_phone(request)
+    phone = _get_active_phone(request)
     client = await _get_client(phone)
 
     try:
