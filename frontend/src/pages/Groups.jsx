@@ -21,6 +21,9 @@ export default function Groups({ showToast }) {
   const [expandedGroup, setExpandedGroup] = useState(null)
   const [groupMessages, setGroupMessages] = useState({})
   const [permissions, setPermissions] = useState({})
+  // 👇 new state for results
+  const [sendResults, setSendResults] = useState([])
+  const [showResults, setShowResults] = useState(false)
 
   const fetchGroups = async () => {
     setLoading(true)
@@ -75,9 +78,14 @@ export default function Groups({ showToast }) {
     if (selectedUsernames.length === 0) return showToast('Select at least one group', 'error')
     if (!message.trim()) return showToast('Enter or generate a message', 'error')
     setSending(true)
+    setSendResults([])
+    setShowResults(false)
     try {
-      const result = await sendPostToGroups(selectedUsernames, message, 2.0)
+      // 👇 pass brandName
+      const result = await sendPostToGroups(selectedUsernames, message, 2.0, brandName)
       const success = result.results.filter(r => r.success).length
+      setSendResults(result.results)
+      setShowResults(true)
       showToast(`Sent to ${success}/${result.results.length} groups`, 'success')
     } catch (err) {
       showToast('Send failed', 'error')
@@ -298,6 +306,22 @@ export default function Groups({ showToast }) {
       >
         {sending ? '📤 Sending...' : '📤 Send Post to Selected Groups'}
       </button>
+
+      {/* 👇 Results section */}
+      {showResults && sendResults.length > 0 && (
+        <div className="mt-4 bg-surface border border-gray-800 rounded-xl p-4 max-h-60 overflow-y-auto">
+          <h3 className="font-semibold text-white mb-2">📋 Send Results</h3>
+          {sendResults.map((r, idx) => (
+            <div key={idx} className="flex items-center gap-3 py-1 border-b border-gray-800 text-sm">
+              <span className={r.success ? 'text-green-400' : 'text-red-400'}>
+                {r.success ? '✅' : '❌'}
+              </span>
+              <span className="text-gray-300">@{r.group}</span>
+              {!r.success && <span className="text-red-400 text-xs">{r.error}</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
