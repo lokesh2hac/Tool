@@ -23,7 +23,7 @@ export default function Groups({ showToast }) {
   const [permissions, setPermissions] = useState({})
   const [sendResults, setSendResults] = useState([])
   const [showResults, setShowResults] = useState(false)
-  const [joinFirst, setJoinFirst] = useState(false)  // 👈 new
+  const [joinFirst, setJoinFirst] = useState(false)
 
   const fetchGroups = async () => {
     setLoading(true)
@@ -62,13 +62,33 @@ export default function Groups({ showToast }) {
   const handleGenerate = async () => {
     setGenerating(true)
     try {
-      const msg = await generateRecruitmentPost(brandName)
-      setMessage(msg)
+      const raw = await generateRecruitmentPost(brandName)
+      let postText = raw
+      // Try to parse if it looks like JSON
+      try {
+        if (raw.trim().startsWith('{') || raw.trim().startsWith('```json')) {
+          // Remove markdown code fences if present
+          let cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+          const parsed = JSON.parse(cleaned)
+          postText = parsed.post || parsed.message || cleaned
+        }
+      } catch (e) {
+        // Not JSON, use raw
+        postText = raw
+      }
+      setMessage(postText)
       showToast('Message generated', 'success')
     } catch {
       showToast('Generation failed', 'error')
     } finally {
       setGenerating(false)
+    }
+  }
+
+  const copyMessage = () => {
+    if (message) {
+      navigator.clipboard.writeText(message)
+      showToast('📋 Message copied!', 'success')
     }
   }
 
@@ -280,6 +300,15 @@ export default function Groups({ showToast }) {
             >
               {generating ? '...' : '✨ Generate AI'}
             </button>
+            {message && (
+              <button
+                onClick={copyMessage}
+                className="px-3 py-1 bg-gray-700 text-white text-sm rounded-lg hover:bg-gray-600"
+                title="Copy message"
+              >
+                📋 Copy
+              </button>
+            )}
           </div>
         </div>
         <textarea
@@ -295,7 +324,7 @@ export default function Groups({ showToast }) {
         </p>
       </div>
 
-      {/* 👇 New: Join & Post checkbox */}
+      {/* Join & Post checkbox */}
       <div className="flex items-center gap-2 mt-3 mb-4">
         <input
           type="checkbox"
