@@ -57,7 +57,8 @@ class SendPostRequest(BaseModel):
     group_usernames: List[str]
     message: str
     delay_between: float = 2.0
-    brand_name: Optional[str] = None   # 👈 added
+    brand_name: Optional[str] = None
+    join_first: bool = False   # 👈 new
 
 @router.post("/send")
 async def send_posts_to_groups(body: SendPostRequest, request: Request):
@@ -69,6 +70,13 @@ async def send_posts_to_groups(body: SendPostRequest, request: Request):
 
     for username in body.group_usernames:
         try:
+            # Optionally join first
+            if body.join_first:
+                joined = await telegram_client.join_group(client, username)
+                if not joined:
+                    raise Exception("Failed to join group")
+
+            # Send the message
             await telegram_client.send_message_to_group(client, username, body.message)
             results.append({"group": username, "success": True})
             status = "success"
@@ -95,9 +103,6 @@ async def send_posts_to_groups(body: SendPostRequest, request: Request):
 
     return {"results": results}
 
-# ================================================================
-# Optional: History endpoint
-# ================================================================
 @router.get("/history")
 async def get_post_history(request: Request, limit: int = Query(50, description="Max logs to return")):
     """View the history of sent posts for the active user."""
