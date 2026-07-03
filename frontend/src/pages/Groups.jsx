@@ -49,7 +49,11 @@ export default function Groups({ showToast }) {
     setScanning(true)
     try {
       const result = await scanGroups(keyword)
-      showToast(`Found ${result.total} groups`, 'success')
+      let msg = `Found ${result.total} groups`
+      if (result.filtered_restricted > 0) {
+        msg += ` (${result.filtered_restricted} restricted groups filtered out)`
+      }
+      showToast(msg, 'success')
       await fetchGroups()
       setKeyword('')
     } catch (err) {
@@ -67,7 +71,6 @@ export default function Groups({ showToast }) {
       // Try to parse if it looks like JSON
       try {
         if (raw.trim().startsWith('{') || raw.trim().startsWith('```json')) {
-          // Remove markdown code fences if present
           let cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
           const parsed = JSON.parse(cleaned)
           postText = parsed.post || parsed.message || cleaned
@@ -188,7 +191,7 @@ export default function Groups({ showToast }) {
           </button>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          Uses AI to expand keywords and saves up to 20 groups per keyword.
+          Uses AI to expand keywords and saves only groups where you can post.
         </p>
       </div>
 
