@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from lib import telegram_client, gemini
 from lib.supabase_client import supabase
+import asyncio
 
 router = APIRouter()
 
@@ -72,22 +73,23 @@ async def list_scanned_groups(request: Request):
 @router.post("/search")
 async def search_groups(body: SearchGroupsRequest, request: Request):
     """
-    1. Gemini AI expands the keyword into 5 iGaming-specific search terms
+    1. Gemini AI expands the keyword into search terms
     2. Telegram searches each keyword for public groups
-    3. Results are deduplicated and returned with keywords_used so frontend can show them
+    3. Filters: only supergroups with a username AND where sending is allowed
+    4. Saves only the filtered groups
     """
     phone = _get_active_phone(request)
     client = await _get_client(phone)
 
-    # Step 1: Gemini generates smart keywords
+    # Generate keywords
     try:
         keywords = await gemini.generate_keywords(body.keyword, body.model or gemini.DEFAULT_GEMINI_MODEL)
     except Exception:
         keywords = [body.keyword]
 
-    # Step 2: Search Telegram for each keyword
-    seen: set = set()
+    seen = set()
     all_groups = []
+    filtered_restricted = 0
 
     for kw in keywords:
         try:
@@ -96,15 +98,23 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
                 key = g.get("group_username") or g.get("group_title", "")
                 if key and key not in seen:
                     seen.add(key)
+                    # 👇 Check if we can send messages in this group
+                    try:
+                        can_send = await telegram_client.can_send_messages(client, g["group_username"])
+                        if not can_send:
+                            filtered_restricted += 1
+                            continue  # skip restricted groups
+                    except Exception:
+                        filtered_restricted += 1
+                        continue
                     all_groups.append(g)
         except Exception:
             continue
 
-    # Step 3: Save to Supabase (upsert to avoid duplicates) and attach IDs
+    # Save only the filtered groups
     saved = []
     for g in all_groups:
         try:
-            # Check if already exists for this user
             existing = supabase.table("scanned_groups") \
                 .select("id") \
                 .eq("session_phone", phone) \
@@ -112,7 +122,6 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
                 .execute()
             if existing.data:
                 g["id"] = existing.data[0]["id"]
-                # Optionally update member_count
                 supabase.table("scanned_groups") \
                     .update({"member_count": g.get("member_count", 0)}) \
                     .eq("id", existing.data[0]["id"]) \
@@ -135,6 +144,7 @@ async def search_groups(body: SearchGroupsRequest, request: Request):
         "groups": saved,
         "keywords_used": keywords,
         "total": len(saved),
+        "filtered_restricted": filtered_restricted,   # 👈 new
     }
 
 
