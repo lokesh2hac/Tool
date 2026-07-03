@@ -1,6 +1,6 @@
 import os
 import sys
-import asyncio  # 👈 added
+import asyncio
 from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -19,17 +19,13 @@ if not _API_ID_STR or not _API_HASH:
 API_ID = int(_API_ID_STR)
 API_HASH = _API_HASH
 
-# In-memory store of active clients keyed by phone
 active_clients: dict = {}
-
 
 def create_client(session_string: str = "") -> TelegramClient:
     return TelegramClient(StringSession(session_string), API_ID, API_HASH)
 
-
 def get_session_string(client: TelegramClient) -> str:
     return client.session.save()
-
 
 async def send_code(phone: str) -> str:
     client = create_client()
@@ -37,7 +33,6 @@ async def send_code(phone: str) -> str:
     active_clients[phone] = client
     result = await client.send_code_request(phone)
     return result.phone_code_hash
-
 
 async def sign_in(phone: str, code: str, phone_code_hash: str):
     client = active_clients.get(phone)
@@ -50,7 +45,6 @@ async def sign_in(phone: str, code: str, phone_code_hash: str):
     me = await client.get_me()
     return client, session_string, me.username or ""
 
-
 async def sign_in_2fa(phone: str, password: str):
     client = active_clients.get(phone)
     if client is None:
@@ -59,7 +53,6 @@ async def sign_in_2fa(phone: str, password: str):
     session_string = get_session_string(client)
     me = await client.get_me()
     return client, session_string, me.username or ""
-
 
 async def get_client_for_phone(phone: str, session_string: str) -> TelegramClient:
     if phone in active_clients:
@@ -71,36 +64,22 @@ async def get_client_for_phone(phone: str, session_string: str) -> TelegramClien
     active_clients[phone] = client
     return client
 
-
 async def search_groups(client: TelegramClient, keyword: str, limit: int = 50) -> list:
-    """
-    Search PUBLIC Telegram groups only.
-    Rules:
-    - Must be a supergroup/megagroup (NOT a broadcast channel)
-    - Must have a public username (so we can fetch messages & send outreach)
-    - Skips private groups, broadcast-only channels, bots
-    """
     try:
         result = await client(SearchRequest(q=keyword, limit=limit))
         groups = []
         for chat in result.chats:
-            # Only Channel type with megagroup=True = public supergroup
-            # Chat type = small legacy group (no username usually)
             if isinstance(chat, Channel):
-                # Skip broadcast channels (they are not groups)
                 if getattr(chat, "broadcast", False):
                     continue
-                # Must be a megagroup (supergroup)
                 if not getattr(chat, "megagroup", False):
                     continue
             elif isinstance(chat, Chat):
-                # Legacy small groups rarely have usernames, skip
                 continue
             else:
                 continue
 
             username = getattr(chat, "username", "") or ""
-            # MUST have a public username — required for message fetch & outreach
             if not username:
                 continue
 
@@ -121,9 +100,7 @@ async def search_groups(client: TelegramClient, keyword: str, limit: int = 50) -
     except Exception as e:
         raise RuntimeError(f"Group search failed: {str(e)}")
 
-
 async def get_messages(client: TelegramClient, group_username: str, limit: int = 100) -> dict:
-    """Fetch last `limit` messages from a public group."""
     try:
         entity = await client.get_entity(group_username)
         group_title = getattr(entity, "title", group_username)
@@ -153,32 +130,16 @@ async def get_messages(client: TelegramClient, group_username: str, limit: int =
     except Exception as e:
         raise RuntimeError(f"Failed to fetch messages: {str(e)}")
 
-
-# Alias for auto‑scan compatibility (same function, different name)
 async def get_group_messages(client: TelegramClient, group_username: str, limit: int = 100) -> dict:
-    """
-    Alias for get_messages – used by the auto‑scan feature.
-    """
     return await get_messages(client, group_username, limit)
 
-
 async def send_message(client: TelegramClient, username: str, message: str):
-    """Send a direct message to a Telegram user."""
     try:
         await client.send_message(username, message)
     except Exception as e:
         raise RuntimeError(f"Failed to send message: {str(e)}")
 
-
-# ================================================================
-# NEW FUNCTIONS for Group Posting
-# ================================================================
-
 async def can_send_messages(client: TelegramClient, group_username: str) -> bool:
-    """
-    Check if the group allows sending messages (not restricted).
-    Returns True if the user is likely able to post, False otherwise.
-    """
     try:
         entity = await client.get_entity(group_username)
         if hasattr(entity, 'default_banned_rights') and entity.default_banned_rights:
@@ -188,29 +149,20 @@ async def can_send_messages(client: TelegramClient, group_username: str) -> bool
     except Exception:
         return False
 
-
 async def send_message_to_group(client: TelegramClient, group_username: str, message: str):
-    """Send a message to a public group by username."""
     try:
         entity = await client.get_entity(group_username)
         await client.send_message(entity, message)
     except Exception as e:
         raise RuntimeError(f"Failed to send message to {group_username}: {str(e)}")
 
-
 async def join_group(client: TelegramClient, group_username: str) -> bool:
-    """
-    Attempt to join a public group by username.
-    Returns True if successful or already a member, False otherwise.
-    """
     try:
         entity = await client.get_entity(group_username)
         await client.join_channel(entity)
-        # Wait a moment for the join to propagate
         await asyncio.sleep(0.5)
         return True
     except Exception as e:
-        # If the user is already a member, consider it a success
         if "You are already a member" in str(e):
             return True
         return False
