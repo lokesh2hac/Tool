@@ -28,7 +28,6 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 _active_gemini_key: str = ""
 _active_gemini_model: str = DEFAULT_GEMINI_MODEL
 
-# Global semaphore to limit concurrent AI requests across the whole app
 _AI_SEMAPHORE = asyncio.Semaphore(3)
 
 
@@ -57,82 +56,79 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS (all new – job posting focused)
+# PROMPTS – CANDIDATE SEARCH
 # -------------------------------------------------------------------
 
-KEYWORD_PROMPT = """You are a job market researcher. You need to generate search keywords to find Telegram GROUPS where people post **job openings** – especially work‑from‑home and monthly salary positions.
+KEYWORD_PROMPT = """You are a tech recruiter searching for Telegram groups where **software developers** and **tech professionals** hang out – especially those looking for remote work.
 
-Brand/Topic: "{brand_name}" – but the groups may be general job boards, freelancing, remote work, etc.
+Brand/Topic: "{brand_name}" – we are hiring Senior Developers (C#, Python, AI, Node.js). We want to find groups where candidates discuss jobs, freelancing, or tech.
 
-Generate **at least 50 unique search keywords** (short: 1–4 words each) that can be used to discover such groups. Cover these categories:
+Generate **at least 50 unique search keywords** (short: 1–4 words each) to discover such groups. Cover:
 
-1. **General job terms**:
-   - "jobs", "hiring", "vacancy", "recruitment", "career", "opportunity"
+1. **Tech job terms**:
+   - "developer jobs", "software engineer", "programming jobs", "tech hiring"
 
-2. **Work‑from‑home / remote**:
-   - "work from home", "WFH", "remote jobs", "online work", "home based"
+2. **Specific languages**:
+   - "C# developers", ".NET jobs", "Python developers", "AI engineers", "Node.js"
 
-3. **Salary / pay**:
-   - "salary", "monthly pay", "per month", "₹", "payroll"
+3. **Remote / freelance**:
+   - "remote developers", "freelance programmers", "work from home tech"
 
-4. **Job types**:
-   - "part time", "full time", "freelance", "internship", "contract"
-
-5. **Indian context**:
-   - "India jobs", "Indian work", "desi jobs", "freshers", "experienced"
+4. **Indian context**:
+   - "India developers", "Indian programmers", "tech community India"
 
 Rules:
 - No duplicates.
-- Mix English and Hinglish if helpful.
 - Short (1–4 words).
-- Focus on India.
-- Return ONLY this JSON format:
+- Return ONLY JSON:
 {{
-  "keywords": [
-    "keyword1",
-    "keyword2",
-    ...
-    "keyword50+"
-  ]
+  "keywords": ["kw1", "kw2", ...]
 }}
 """
 
 
-JOB_POSTING_ANALYSIS_PROMPT = """You are a job market researcher. We are scanning Telegram groups to find **legitimate job postings** – especially those offering **work‑from‑home** and **monthly salary** positions.
+CANDIDATE_ANALYSIS_PROMPT = """You are a tech recruiter. We are scanning Telegram groups to find **qualified developers** who are looking for remote work or have relevant experience.
 
-Analyze the given Telegram messages and identify posts that are **clearly hiring for a job or role**.
+We are hiring:
+- Senior C# / .NET Developer
+- Senior Python Developer
+- AI Full-Stack Engineer
+- Senior Node.js Developer
 
-Strong signals (score high):
-- "Work from home" / "WFH" / "Remote"
-- "Salary: ₹X per month" / "Monthly pay" / "₹X/month"
-- "Hiring" / "Recruitment" / "We are looking for"
-- "Job opening" / "Vacancy" / "Position available"
-- "Part‑time" / "Full‑time" / "Freelance"
-- "Freshers welcome" / "Experience required"
-- "Contact: @username" / "DM for details"
-- "Salary: ₹15,000 – ₹25,000 per month"
+Requirements:
+- 8+ years experience
+- Bachelor's degree in CS or related
+- Native-level English
+- Scalable applications experience
 
-Scoring guidelines (0-10):
-- 9-10: Clear job posting with role, salary (preferably monthly), and contact/apply instructions.
-- 7-8: Contains hiring language and some details, but missing salary or contact.
-- 6: Mentions opportunities but not explicitly a job offer.
+Analyze the given messages and identify users who **are looking for jobs** or **have relevant skills**.
+
+Strong signals:
+- Mentions C#, .NET, Python, AI, Node.js, or similar.
+- Says "looking for work", "open to work", "available for hire".
+- Describes projects, experience, or stack.
+- Has a GitHub or portfolio link.
+
+Scoring (0-10):
+- 9-10: Clearly states skills, experience, and availability.
+- 7-8: Mentions skills and interest, but less detail.
+- 6: Possibly relevant but weak evidence.
 
 Mandatory:
-- The message must be a **job offer / recruitment post** (not a general discussion or query).
-- If ambiguous, skip.
-- Deduplicate by message content (keep highest score).
+- Username must start with @.
+- Skip spam, bots, or irrelevant messages.
 
 Input format:
 @username (Display Name): message text
 
-Output: JSON array of job postings (max 15), sorted by score descending.
+Output: JSON array of candidates (max 15), sorted by score descending.
 Each object:
 {{
   "username": "@handle",
   "display_name": "Name",
   "score": 8,
-  "reason": "why this is a strong job posting (mention WFH, salary, role, etc.)",
-  "sample_message": "exact text of the job post",
+  "reason": "why this candidate is a good fit (skills, experience)",
+  "sample_message": "exact text",
   "is_indian_likely": true/false
 }}
 
@@ -220,7 +216,6 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
     model_name = (model or _active_gemini_model or DEFAULT_GEMINI_MODEL).strip()
     if not api_key:
         raise RuntimeError("No Gemini API key")
-
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": temperature, "maxOutputTokens": 4096},
@@ -285,34 +280,27 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str
 
 
 # -------------------------------------------------------------------
-# PUBLIC FUNCTIONS – JOB POSTING ONLY
+# FALLBACK KEYWORDS
 # -------------------------------------------------------------------
-
 def _fallback_keywords(brand_name: str) -> List[str]:
     base = [
-        "jobs", "hiring", "vacancy", "recruitment", "career",
-        "work from home", "WFH", "remote jobs", "online work", "home based",
-        "salary", "monthly pay", "per month", "payroll",
-        "part time", "full time", "freelance", "internship", "contract",
-        "India jobs", "freshers", "experienced", "job opening",
-        "work from home jobs", "remote work india", "freelance india",
-        "part time jobs", "full time jobs", "internship india",
-        "fresher jobs", "experienced jobs", "salary per month",
-        "work from home vacancy", "home based jobs", "online jobs india",
-        "digital jobs", "content writing jobs", "data entry jobs",
-        "customer service jobs", "teaching jobs", "tutor jobs",
-        "admin jobs", "accounting jobs", "marketing jobs",
-        "sales jobs", "it jobs", "software jobs", "web development jobs",
-        "design jobs", "graphic design jobs", "video editing jobs",
-        "social media jobs", "seo jobs", "digital marketing jobs",
-        "hr jobs", "recruitment jobs", "bpo jobs", "call center jobs"
+        "developer jobs", "software engineer", "programming jobs", "tech hiring",
+        "C# developers", ".NET jobs", "Python developers", "AI engineers", "Node.js",
+        "remote developers", "freelance programmers", "work from home tech",
+        "India developers", "Indian programmers", "tech community India",
+        "senior developer", "full stack", "backend engineer", "frontend",
+        "coding jobs", "programmer", "software dev", "tech recruiter",
+        "hire developers", "looking for work", "open to work", "available for hire"
     ]
     unique = list(dict.fromkeys(base))
     while len(unique) < 50:
-        unique.append(f"job{len(unique)}")
+        unique.append(f"tech{len(unique)}")
     return unique[:50]
 
 
+# -------------------------------------------------------------------
+# PUBLIC FUNCTIONS
+# -------------------------------------------------------------------
 async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) -> List[str]:
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
@@ -322,7 +310,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
             kw = data["keywords"]
             if isinstance(kw, list) and len(kw) >= 20:
                 while len(kw) < 50:
-                    kw.append(f"job{len(kw)}")
+                    kw.append(f"tech{len(kw)}")
                 return kw[:50]
         return _fallback_keywords(brand_name)
     except GeminiRateLimitError:
@@ -331,7 +319,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
         return _fallback_keywords(brand_name)
 
 
-async def analyze_job_postings(
+async def analyze_candidates(
     messages_list: List[Dict[str, Any]],
     brand_name: Optional[str] = None,
     key_id: Optional[str] = None,
@@ -340,13 +328,13 @@ async def analyze_job_postings(
     delay_between_chunks: float = 0.5,
 ) -> List[Dict[str, Any]]:
     """
-    Analyze messages to find job postings (recruitment ads).
+    Analyze messages to find qualified developer candidates.
     """
     if not messages_list:
         return []
 
-    display_brand = brand_name if brand_name else "job listings"
-    all_postings = []
+    display_brand = brand_name if brand_name else "tech hiring"
+    all_candidates = []
 
     for i in range(0, len(messages_list), chunk_size):
         chunk = messages_list[i:i+chunk_size]
@@ -364,7 +352,7 @@ async def analyze_job_postings(
             continue
 
         formatted = "\n".join(formatted_lines)
-        prompt = JOB_POSTING_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
+        prompt = CANDIDATE_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
 
         try:
             raw_text = await _call_ai_async(prompt, key_id=key_id, model=model)
@@ -374,49 +362,22 @@ async def analyze_job_postings(
                     c for c in candidates
                     if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
                 ]
-                all_postings.extend(filtered)
+                all_candidates.extend(filtered)
         except GeminiRateLimitError:
             raise
         except Exception as e:
-            print(f"Job posting chunk {i//chunk_size + 1} failed: {e}")
+            print(f"Chunk {i//chunk_size + 1} failed: {e}")
             continue
 
         if i + chunk_size < len(messages_list):
             await asyncio.sleep(delay_between_chunks)
 
-    # Deduplicate by message content – keep highest score
     unique = {}
-    for c in all_postings:
-        key = c.get("sample_message", "")[:100]
+    for c in all_candidates:
+        key = c.get("username", "")
         if key not in unique or c.get("score", 0) > unique[key].get("score", 0):
             unique[key] = c
 
     final = list(unique.values())
     final.sort(key=lambda x: -int(x.get("score", 0)))
     return final[:15]
-
-
-# ================================================================
-# BACKWARD COMPATIBILITY – maps old 'analyze_candidates' to new job-posting analyzer
-# ================================================================
-
-async def analyze_candidates(
-    messages_list: List[Dict[str, Any]],
-    brand_name: Optional[str] = None,
-    key_id: Optional[str] = None,
-    model: str = DEFAULT_GEMINI_MODEL,
-    chunk_size: int = 30,
-    delay_between_chunks: float = 0.5,
-) -> List[Dict[str, Any]]:
-    """
-    This function is now an alias for analyze_job_postings().
-    It finds job openings (WFH, monthly salary) instead of candidates.
-    """
-    return await analyze_job_postings(
-        messages_list=messages_list,
-        brand_name=brand_name,
-        key_id=key_id,
-        model=model,
-        chunk_size=chunk_size,
-        delay_between_chunks=delay_between_chunks,
-    )
