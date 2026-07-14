@@ -57,33 +57,33 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS
+# PROMPTS (all new – job posting focused)
 # -------------------------------------------------------------------
-KEYWORD_PROMPT = """You are a Telegram group discovery expert for Indian iGaming affiliate recruitment.
 
-Brand name: "{brand_name}"
-Goal: Find public Telegram GROUPS (not channels) where affiliate agents and website promoters hang out. These agents recruit users for betting/gaming platforms and earn commissions.
+KEYWORD_PROMPT = """You are a job market researcher. You need to generate search keywords to find Telegram GROUPS where people post **job openings** – especially work‑from‑home and monthly salary positions.
 
-Generate **at least 50 unique search keywords** (short: 1–4 words each) that can be used to discover such groups. Cover these 5 categories:
+Brand/Topic: "{brand_name}" – but the groups may be general job boards, freelancing, remote work, etc.
 
-1. **Brand‑specific variations** (at least 10):
-   - Exact brand, with "India", "official", "club", "community", "referral", "promo", "bonus", "agent", "affiliate", "partner".
+Generate **at least 50 unique search keywords** (short: 1–4 words each) that can be used to discover such groups. Cover these categories:
 
-2. **Affiliate / promoter terms** (at least 10):
-   - "affiliate", "referral code", "commission", "earning", "income", "agent", "promoter", "recruitment", "team", "leader", "master agent", "sub agent".
+1. **General job terms**:
+   - "jobs", "hiring", "vacancy", "recruitment", "career", "opportunity"
 
-3. **Category / gaming terms** (at least 10):
-   - "betting", "cricket betting", "fantasy sports", "casino", "slot", "jackpot", "predictions", "tips", "odds", "exchange", "matka", "satta", "gaming app".
+2. **Work‑from‑home / remote**:
+   - "work from home", "WFH", "remote jobs", "online work", "home based"
 
-4. **Hinglish / Indian slang** (at least 10):
-   - "paise kamao", "satta tips", "lagao", "jeet", "adda", "kamai online", "tipster", "betting ID", "UPI payment", "PhonePe", "GPay", "ipl betting".
+3. **Salary / pay**:
+   - "salary", "monthly pay", "per month", "₹", "payroll"
 
-5. **Action / recruitment phrases** (at least 10):
-   - "join now", "earn with us", "refer and earn", "partner program", "work from home", "daily payout", "commission based", "recruiting agents", "become a promoter".
+4. **Job types**:
+   - "part time", "full time", "freelance", "internship", "contract"
+
+5. **Indian context**:
+   - "India jobs", "Indian work", "desi jobs", "freshers", "experienced"
 
 Rules:
 - No duplicates.
-- Mix English and Hinglish.
+- Mix English and Hinglish if helpful.
 - Short (1–4 words).
 - Focus on India.
 - Return ONLY this JSON format:
@@ -98,101 +98,48 @@ Rules:
 """
 
 
-CANDIDATE_ANALYSIS_PROMPT = """You are a talent scout for **{brand_name}** – a leading Indian gaming/betting platform. We are hiring **affiliate agents and website promoters** on a **commission‑based** model.
+JOB_POSTING_ANALYSIS_PROMPT = """You are a job market researcher. We are scanning Telegram groups to find **legitimate job postings** – especially those offering **work‑from‑home** and **monthly salary** positions.
 
-Analyze the given Telegram **group** messages and identify users actively promoting betting/gaming platforms.
+Analyze the given Telegram messages and identify posts that are **clearly hiring for a job or role**.
 
-Strong signals:
-- Shares referral codes/links
-- Direct recruitment language ("join me", "use my code", "earn with me", "commission")
-- Mentions earning, UPI, Paytm, GPay
-- Uses Hinglish, references IPL/cricket
+Strong signals (score high):
+- "Work from home" / "WFH" / "Remote"
+- "Salary: ₹X per month" / "Monthly pay" / "₹X/month"
+- "Hiring" / "Recruitment" / "We are looking for"
+- "Job opening" / "Vacancy" / "Position available"
+- "Part‑time" / "Full‑time" / "Freelance"
+- "Freshers welcome" / "Experience required"
+- "Contact: @username" / "DM for details"
+- "Salary: ₹15,000 – ₹25,000 per month"
 
-Scoring (0-10):
-- 9-10: Unambiguous promoter with referral link, active username, Indian
-- 7-8: Strong promoter, recruitment language, audience likely
-- 6: Promising but weaker evidence
-Only score >= 6.
+Scoring guidelines (0-10):
+- 9-10: Clear job posting with role, salary (preferably monthly), and contact/apply instructions.
+- 7-8: Contains hiring language and some details, but missing salary or contact.
+- 6: Mentions opportunities but not explicitly a job offer.
 
-Mandatory: username must start with @ – otherwise skip.
+Mandatory:
+- The message must be a **job offer / recruitment post** (not a general discussion or query).
+- If ambiguous, skip.
+- Deduplicate by message content (keep highest score).
 
 Input format:
 @username (Display Name): message text
 
-Output: JSON array of candidates (max 15), sorted by score descending.
+Output: JSON array of job postings (max 15), sorted by score descending.
 Each object:
 {{
   "username": "@handle",
   "display_name": "Name",
   "score": 8,
-  "reason": "short reason",
-  "sample_message": "exact message (escape quotes and newlines)",
-  "is_indian_likely": true/false,
-  "existing_platform": "platform name if mentioned"
-}}
-
-Return only the JSON array.
-
-Messages:
-{messages}
-"""
-
-
-SEEKER_ANALYSIS_PROMPT = """You are a talent scout for **{brand_name}** – a leading Indian gaming/betting platform. We are hiring **affiliate agents and website promoters** on a **commission‑based** model.
-
-Analyze the given Telegram **group** messages and identify users who are **actively looking for affiliate marketing or website promoter jobs**. These are people seeking such positions, not those offering them.
-
-Strong signals:
-- "Looking for affiliate marketing work"
-- "Need website promoter job"
-- "I want to earn commission"
-- "Anyone hiring affiliate agents?"
-- "Seeking promotion work for gaming sites"
-- "I have experience in betting affiliate"
-- "Want to become a promoter"
-
-Scoring (0-10):
-- 9-10: Clearly states they are looking for work, includes contact info, Indian
-- 7-8: Expresses interest in earning through promotion, asks for opportunities
-- 6: Mentions earning or promotion but not explicitly seeking
-
-Mandatory: username must start with @ – otherwise skip.
-
-Input format:
-@username (Display Name): message text
-
-Output: JSON array of candidates (max 15), sorted by score descending.
-Each object:
-{{
-  "username": "@handle",
-  "display_name": "Name",
-  "score": 8,
-  "reason": "why they are a good candidate (seeking work)",
-  "sample_message": "exact message",
+  "reason": "why this is a strong job posting (mention WFH, salary, role, etc.)",
+  "sample_message": "exact text of the job post",
   "is_indian_likely": true/false
 }}
 
 Return only the JSON array.
-
 Messages:
 {messages}
 """
-
-
-# NEW: Recruitment post prompt
-RECRUITMENT_POST_PROMPT = """You are a recruitment specialist for {brand_name}, a leading Indian gaming platform. We are hiring Affiliate Marketing Partners and Website Promoters.
-
-Create a compelling Telegram recruitment post (max 300 characters) that attracts potential affiliates and promoters.
-
-Key points:
-- Commission-based with up to 50% revenue share.
-- Monthly payouts, USDT withdrawals.
-- Looking for Telegram group owners, YouTubers, influencers, website owners, SEO experts.
-- Target: Indian audience.
-- Do NOT include any @username (to avoid spam filters).
-- Each post should be unique – vary the wording.
-
-Create a recruitment post:"""
 
 
 # -------------------------------------------------------------------
@@ -207,18 +154,15 @@ def _strip_markdown(text: str) -> str:
 
 def _extract_json(text: str) -> Any:
     text = _strip_markdown(text)
-    # Strategy 1: direct
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Strategy 2: remove trailing commas
     cleaned = re.sub(r',\s*([}\]])', r'\1', text)
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    # Strategy 3: bracket balancing
     start = None
     for i, ch in enumerate(text):
         if ch in '{[':
@@ -252,7 +196,7 @@ def _extract_json(text: str) -> Any:
 
 
 # -------------------------------------------------------------------
-# AI CALLS with SEMAPHORE and RETRIES (updated to accept temperature)
+# AI CALLS
 # -------------------------------------------------------------------
 def _call_groq_sync(prompt: str, temperature: float = 0.2) -> str:
     payload = {
@@ -320,12 +264,8 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
 
 
 async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
-    """
-    Wrapper that uses a global semaphore to limit concurrency.
-    """
     async with _AI_SEMAPHORE:
         loop = asyncio.get_event_loop()
-        # Run the sync AI call in a thread pool
         return await loop.run_in_executor(
             None,
             functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model, temperature=temperature)
@@ -333,9 +273,6 @@ async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optio
 
 
 def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
-    """
-    Try Gemini; on any error (except 429) fallback to Groq.
-    """
     gemini_key = _active_gemini_key or GEMINI_API_KEY
     if gemini_key:
         try:
@@ -348,27 +285,31 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str
 
 
 # -------------------------------------------------------------------
-# PUBLIC FUNCTIONS
+# PUBLIC FUNCTIONS – JOB POSTING ONLY
 # -------------------------------------------------------------------
+
 def _fallback_keywords(brand_name: str) -> List[str]:
     base = [
-        brand_name, f"{brand_name} india", f"{brand_name} official", f"{brand_name} club",
-        f"{brand_name} community", f"{brand_name} referral", f"{brand_name} promo",
-        f"{brand_name} bonus", f"{brand_name} agent", f"{brand_name} affiliate",
-        f"{brand_name} partner", f"{brand_name} earning", f"{brand_name} cricket",
-        f"{brand_name} betting", "affiliate india", "betting affiliate", "igaming promoter",
-        "referral code", "commission agent", "earn money online", "passive income",
-        "work from home", "betting tips", "cricket betting", "fantasy sports",
-        "satta matka", "matka tips", "online casino", "slot games", "jackpot",
-        "predictions", "tipster", "betting exchange", "odds", "ipl betting",
-        "dream11", "my11circle", "paytm first", "gpay betting", "phonepe betting",
-        "upi payment", "paise kamao", "satta tips", "lagao", "jeet", "adda",
-        "kamai online", "betting id", "join now", "refer and earn", "partner program",
-        "recruiting agents", "become a promoter"
+        "jobs", "hiring", "vacancy", "recruitment", "career",
+        "work from home", "WFH", "remote jobs", "online work", "home based",
+        "salary", "monthly pay", "per month", "payroll",
+        "part time", "full time", "freelance", "internship", "contract",
+        "India jobs", "freshers", "experienced", "job opening",
+        "work from home jobs", "remote work india", "freelance india",
+        "part time jobs", "full time jobs", "internship india",
+        "fresher jobs", "experienced jobs", "salary per month",
+        "work from home vacancy", "home based jobs", "online jobs india",
+        "digital jobs", "content writing jobs", "data entry jobs",
+        "customer service jobs", "teaching jobs", "tutor jobs",
+        "admin jobs", "accounting jobs", "marketing jobs",
+        "sales jobs", "it jobs", "software jobs", "web development jobs",
+        "design jobs", "graphic design jobs", "video editing jobs",
+        "social media jobs", "seo jobs", "digital marketing jobs",
+        "hr jobs", "recruitment jobs", "bpo jobs", "call center jobs"
     ]
     unique = list(dict.fromkeys(base))
     while len(unique) < 50:
-        unique.append(f"betting{len(unique)}")
+        unique.append(f"job{len(unique)}")
     return unique[:50]
 
 
@@ -381,7 +322,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
             kw = data["keywords"]
             if isinstance(kw, list) and len(kw) >= 20:
                 while len(kw) < 50:
-                    kw.append(f"{brand_name}search{len(kw)}")
+                    kw.append(f"job{len(kw)}")
                 return kw[:50]
         return _fallback_keywords(brand_name)
     except GeminiRateLimitError:
@@ -390,7 +331,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
         return _fallback_keywords(brand_name)
 
 
-async def analyze_candidates(
+async def analyze_job_postings(
     messages_list: List[Dict[str, Any]],
     brand_name: Optional[str] = None,
     key_id: Optional[str] = None,
@@ -399,88 +340,13 @@ async def analyze_candidates(
     delay_between_chunks: float = 0.5,
 ) -> List[Dict[str, Any]]:
     """
-    Chunked analysis with rate control:
-      - chunk_size: messages per AI call (default 30)
-      - delay_between_chunks: seconds to wait after each chunk
+    Analyze messages to find job postings (recruitment ads).
     """
     if not messages_list:
         return []
 
-    display_brand = brand_name if brand_name else "the gaming platform"
-    all_candidates = []
-
-    for i in range(0, len(messages_list), chunk_size):
-        chunk = messages_list[i:i+chunk_size]
-
-        formatted_lines = []
-        for m in chunk:
-            if not m.get("text"):
-                continue
-            username = m.get("sender_username", "").strip()
-            sender = f"@{username}" if username else "@NoUsername"
-            name = m.get("sender_name", "Unknown")
-            msg = m["text"].replace('"', '\\"').replace('\n', '\\n')
-            formatted_lines.append(f"{sender} ({name}): {msg}")
-
-        if not formatted_lines:
-            continue
-
-        formatted = "\n".join(formatted_lines)
-        prompt = CANDIDATE_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
-
-        try:
-            raw_text = await _call_ai_async(prompt, key_id=key_id, model=model)
-            candidates = _extract_json(raw_text)
-            if isinstance(candidates, list):
-                filtered = [
-                    c for c in candidates
-                    if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
-                ]
-                all_candidates.extend(filtered)
-        except GeminiRateLimitError:
-            raise
-        except Exception as e:
-            print(f"Chunk {i//chunk_size + 1} failed: {e}")
-            continue
-
-        if i + chunk_size < len(messages_list):
-            await asyncio.sleep(delay_between_chunks)
-
-    unique = {}
-    for c in all_candidates:
-        username = c.get("username", "").strip()
-        if not username:
-            continue
-        if username not in unique or c.get("score", 0) > unique[username].get("score", 0):
-            unique[username] = c
-
-    final = list(unique.values())
-    final.sort(
-        key=lambda x: (
-            0 if x.get("is_indian_likely") else 1,
-            -int(x.get("score", 0))
-        )
-    )
-    return final[:15]
-
-
-async def analyze_seekers(
-    messages_list: List[Dict[str, Any]],
-    brand_name: str,
-    key_id: Optional[str] = None,
-    model: str = DEFAULT_GEMINI_MODEL,
-    chunk_size: int = 30,
-    delay_between_chunks: float = 0.5,
-) -> List[Dict[str, Any]]:
-    """
-    Identifies job seekers (people looking for affiliate/promoter work).
-    Uses SEEKER_ANALYSIS_PROMPT.
-    """
-    if not messages_list:
-        return []
-
-    display_brand = brand_name if brand_name else "the gaming platform"
-    all_candidates = []
+    display_brand = brand_name if brand_name else "job listings"
+    all_postings = []
 
     for i in range(0, len(messages_list), chunk_size):
         chunk = messages_list[i:i+chunk_size]
@@ -498,7 +364,7 @@ async def analyze_seekers(
             continue
 
         formatted = "\n".join(formatted_lines)
-        prompt = SEEKER_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
+        prompt = JOB_POSTING_ANALYSIS_PROMPT.format(brand_name=display_brand, messages=formatted)
 
         try:
             raw_text = await _call_ai_async(prompt, key_id=key_id, model=model)
@@ -508,46 +374,23 @@ async def analyze_seekers(
                     c for c in candidates
                     if c.get("username") and c["username"].strip() not in ("@NoUsername", "@", "")
                 ]
-                all_candidates.extend(filtered)
+                all_postings.extend(filtered)
         except GeminiRateLimitError:
             raise
         except Exception as e:
-            print(f"Seeker chunk {i//chunk_size + 1} failed: {e}")
+            print(f"Job posting chunk {i//chunk_size + 1} failed: {e}")
             continue
 
         if i + chunk_size < len(messages_list):
             await asyncio.sleep(delay_between_chunks)
 
+    # Deduplicate by message content – keep highest score
     unique = {}
-    for c in all_candidates:
-        username = c.get("username", "").strip()
-        if not username:
-            continue
-        if username not in unique or c.get("score", 0) > unique[username].get("score", 0):
-            unique[username] = c
+    for c in all_postings:
+        key = c.get("sample_message", "")[:100]
+        if key not in unique or c.get("score", 0) > unique[key].get("score", 0):
+            unique[key] = c
 
     final = list(unique.values())
-    final.sort(key=lambda x: (0 if x.get("is_indian_likely") else 1, -int(x.get("score", 0))))
+    final.sort(key=lambda x: -int(x.get("score", 0)))
     return final[:15]
-
-
-# ================================================================
-# NEW: Recruitment Post Generation
-# ================================================================
-
-async def generate_recruitment_post(brand_name: str = "ACE2KING") -> str:
-    """
-    Generate a unique recruitment post using AI (higher temperature for variety).
-    """
-    prompt = RECRUITMENT_POST_PROMPT.format(brand_name=brand_name)
-    try:
-        raw = await _call_ai_async(prompt, temperature=0.8)  # higher temp for uniqueness
-        # Clean up: remove any extra quotes or markdown
-        raw = raw.strip()
-        # If the response is wrapped in quotes, remove them
-        if raw.startswith('"') and raw.endswith('"'):
-            raw = raw[1:-1]
-        return raw
-    except Exception:
-        # Fallback generic message
-        return f"🚀 Join {brand_name} as an Affiliate Partner! Earn up to 50% revenue share, monthly USDT payouts. We're looking for Telegram group owners, YouTubers, influencers, and website owners. DM for details!"
