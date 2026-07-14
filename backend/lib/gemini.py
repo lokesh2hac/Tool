@@ -394,3 +394,29 @@ async def analyze_job_postings(
     final = list(unique.values())
     final.sort(key=lambda x: -int(x.get("score", 0)))
     return final[:15]
+
+
+# ================================================================
+# BACKWARD COMPATIBILITY – maps old 'analyze_candidates' to new job-posting analyzer
+# ================================================================
+
+async def analyze_candidates(
+    messages_list: List[Dict[str, Any]],
+    brand_name: Optional[str] = None,
+    key_id: Optional[str] = None,
+    model: str = DEFAULT_GEMINI_MODEL,
+    chunk_size: int = 30,
+    delay_between_chunks: float = 0.5,
+) -> List[Dict[str, Any]]:
+    """
+    This function is now an alias for analyze_job_postings().
+    It finds job openings (WFH, monthly salary) instead of candidates.
+    """
+    return await analyze_job_postings(
+        messages_list=messages_list,
+        brand_name=brand_name,
+        key_id=key_id,
+        model=model,
+        chunk_size=chunk_size,
+        delay_between_chunks=delay_between_chunks,
+    )
