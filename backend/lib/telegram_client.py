@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.contacts import SearchRequest
-from telethon.tl.types import Chat, Channel
+from telethon.tl.types import Chat, Channel, InputMessagesFilterEmpty, PeerChannel
 from telethon.errors import SessionPasswordNeededError
 
 load_dotenv()
@@ -64,41 +64,100 @@ async def get_client_for_phone(phone: str, session_string: str) -> TelegramClien
     active_clients[phone] = client
     return client
 
+# -------------------------------------------------------------------
+# NEW: Improved search_groups – uses search_global + fallback
+# -------------------------------------------------------------------
 async def search_groups(client: TelegramClient, keyword: str, limit: int = 50) -> list:
+    """
+    Search PUBLIC Telegram groups using global search (messages) then fallback to SearchRequest.
+    Returns list of groups with username, title, member_count.
+    """
+    groups = []
+    seen = set()
+
+    # Try search_global first (more effective for groups)
     try:
-        result = await client(SearchRequest(q=keyword, limit=limit))
-        groups = []
-        for chat in result.chats:
-            if isinstance(chat, Channel):
-                if getattr(chat, "broadcast", False):
+        result = await client.search_global(
+            keyword,
+            limit=limit * 2,  # get more messages to deduplicate
+            filter=InputMessagesFilterEmpty()
+        )
+        for msg in result:
+            if hasattr(msg, 'peer_id'):
+                # Extract chat ID from peer
+                chat_id = None
+                if hasattr(msg.peer_id, 'channel_id'):
+                    chat_id = msg.peer_id.channel_id
+                elif hasattr(msg.peer_id, 'chat_id'):
+                    chat_id = msg.peer_id.chat_id
+                if not chat_id:
                     continue
-                if not getattr(chat, "megagroup", False):
+                try:
+                    entity = await client.get_entity(PeerChannel(chat_id))
+                    if isinstance(entity, Channel):
+                        # Skip broadcast channels
+                        if getattr(entity, 'broadcast', False):
+                            continue
+                        username = getattr(entity, 'username', None)
+                        if not username:
+                            continue
+                        title = getattr(entity, 'title', '')
+                        member_count = getattr(entity, 'participants_count', 0) or 0
+                        if chat_id not in seen:
+                            seen.add(chat_id)
+                            groups.append({
+                                "group_title": title,
+                                "group_username": username,
+                                "member_count": member_count,
+                                "description": "",
+                            })
+                except Exception:
                     continue
-            elif isinstance(chat, Chat):
-                continue
-            else:
-                continue
-
-            username = getattr(chat, "username", "") or ""
-            if not username:
-                continue
-
-            title = getattr(chat, "title", "") or ""
-            if not title:
-                continue
-
-            member_count = getattr(chat, "participants_count", 0) or 0
-
-            groups.append({
-                "group_title": title,
-                "group_username": username,
-                "member_count": member_count,
-                "description": "",
-            })
-
-        return groups
     except Exception as e:
-        raise RuntimeError(f"Group search failed: {str(e)}")
+        print(f"search_global failed: {e}, falling back to SearchRequest")
+
+    # Fallback: if no groups found, use SearchRequest (less restrictive)
+    if not groups:
+        try:
+            result2 = await client(SearchRequest(q=keyword, limit=limit))
+            for chat in result2.chats:
+                if isinstance(chat, Channel):
+                    if getattr(chat, "broadcast", False):
+                        continue
+                    # We don't require megagroup anymore
+                    username = getattr(chat, "username", "") or ""
+                    if not username:
+                        continue
+                    title = getattr(chat, "title", "") or ""
+                    if not title:
+                        continue
+                    member_count = getattr(chat, "participants_count", 0) or 0
+                    if username not in seen:
+                        seen.add(username)
+                        groups.append({
+                            "group_title": title,
+                            "group_username": username,
+                            "member_count": member_count,
+                            "description": "",
+                        })
+                elif isinstance(chat, Chat):
+                    username = getattr(chat, "username", "") or ""
+                    if username:
+                        title = getattr(chat, "title", "") or ""
+                        groups.append({
+                            "group_title": title,
+                            "group_username": username,
+                            "member_count": 0,
+                            "description": "",
+                        })
+        except Exception as e:
+            raise RuntimeError(f"Group search failed: {str(e)}")
+
+    return groups
+
+# -------------------------------------------------------------------
+# Other functions remain unchanged
+# -------------------------------------------------------------------
 
 async def get_messages(client: TelegramClient, group_username: str, limit: int = 100) -> dict:
     try:
