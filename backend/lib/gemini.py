@@ -28,6 +28,7 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 _active_gemini_key: str = ""
 _active_gemini_model: str = DEFAULT_GEMINI_MODEL
 
+# Global semaphore to limit concurrent AI requests across the whole app
 _AI_SEMAPHORE = asyncio.Semaphore(3)
 
 
@@ -56,33 +57,35 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS – CANDIDATE SEARCH
+# PROMPTS – TECH RECRUITER / CANDIDATE SEARCH
 # -------------------------------------------------------------------
 
-KEYWORD_PROMPT = """You are a tech recruiter searching for Telegram groups where **software developers** and **tech professionals** hang out – especially those looking for remote work.
+# NEW: group‑friendly keyword prompt – generates terms likely in group titles
+KEYWORD_PROMPT = """You are a tech recruiter looking for public Telegram GROUPS where software developers gather.
 
-Brand/Topic: "{brand_name}" – we are hiring Senior Developers (C#, Python, AI, Node.js). We want to find groups where candidates discuss jobs, freelancing, or tech.
+We need to find groups where developers discuss programming, share knowledge, or look for jobs. Focus on groups where the **group name or description** likely contains these terms.
 
-Generate **at least 50 unique search keywords** (short: 1–4 words each) to discover such groups. Cover:
+Generate **at least 50 search keywords** – each should be 1–4 words and likely to appear in a group title or username.
 
-1. **Tech job terms**:
-   - "developer jobs", "software engineer", "programming jobs", "tech hiring"
+Cover these categories:
 
-2. **Specific languages**:
-   - "C# developers", ".NET jobs", "Python developers", "AI engineers", "Node.js"
-
-3. **Remote / freelance**:
-   - "remote developers", "freelance programmers", "work from home tech"
-
-4. **Indian context**:
-   - "India developers", "Indian programmers", "tech community India"
+1. **General tech** (e.g., "programming", "coding", "dev", "tech")
+2. **Language‑specific** ("C#", ".NET", "Python", "Node.js", "AI", "full stack", "backend", "frontend")
+3. **Job / career** ("jobs", "hiring", "freelance", "remote work")
+4. **Indian‑specific** ("India", "Bangalore", "Mumbai", "Indian developers")
 
 Rules:
-- No duplicates.
-- Short (1–4 words).
-- Return ONLY JSON:
+- Mix broad and specific keywords.
+- Use exact phrases that might appear in group titles (e.g., "Python Developers" not just "Python").
+- Avoid too generic words like "chat" or "group".
+- Return ONLY this JSON format:
 {{
-  "keywords": ["kw1", "kw2", ...]
+  "keywords": [
+    "Python Developers",
+    "C# Programming",
+    "Remote Jobs India",
+    ...
+  ]
 }}
 """
 
@@ -216,6 +219,7 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
     model_name = (model or _active_gemini_model or DEFAULT_GEMINI_MODEL).strip()
     if not api_key:
         raise RuntimeError("No Gemini API key")
+
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": temperature, "maxOutputTokens": 4096},
@@ -284,13 +288,20 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str
 # -------------------------------------------------------------------
 def _fallback_keywords(brand_name: str) -> List[str]:
     base = [
-        "developer jobs", "software engineer", "programming jobs", "tech hiring",
-        "C# developers", ".NET jobs", "Python developers", "AI engineers", "Node.js",
-        "remote developers", "freelance programmers", "work from home tech",
-        "India developers", "Indian programmers", "tech community India",
-        "senior developer", "full stack", "backend engineer", "frontend",
-        "coding jobs", "programmer", "software dev", "tech recruiter",
-        "hire developers", "looking for work", "open to work", "available for hire"
+        "Python Developers", "C# Programming", "Node.js Dev", "AI Engineering",
+        "Full Stack Developers", "Backend Engineers", "Frontend Devs",
+        "Remote Tech Jobs", "Freelance Programmers", "Indian Developers",
+        "Software Jobs India", "Tech Community India", "Programmers Group",
+        "Coding India", "Dev India", "Tech Jobs Bangalore", "Mumbai Developers",
+        "Hyderabad Tech", "Pune Developers", "Noida Tech", "Gurgaon IT",
+        "JavaScript Group", "React Developers", "Angular Group", "Django Developers",
+        "Flask Python", "ASP.NET Core", "DevOps Engineers", "Cloud Developers",
+        "Kubernetes Group", "Docker Community", "AI ML Group", "Data Science India",
+        "Machine Learning Engineers", "Deep Learning", "Computer Vision",
+        "NLP Group", "Blockchain Developers", "Web3 India", "Crypto Developers",
+        "Rust Programming", "Go Developers", "Java Group", "Spring Boot",
+        "Android Developers", "iOS Dev", "Flutter Group", "React Native",
+        "Game Developers", "Unity Group", "Unreal Engine", "AR VR Developers"
     ]
     unique = list(dict.fromkeys(base))
     while len(unique) < 50:
