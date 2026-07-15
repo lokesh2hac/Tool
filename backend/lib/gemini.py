@@ -57,10 +57,9 @@ def set_active_gemini_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> No
 
 
 # -------------------------------------------------------------------
-# PROMPTS – TECH RECRUITER / CANDIDATE SEARCH
+# PROMPTS – UPDATED FOR SOFTWARE DEVELOPER RECRUITMENT
 # -------------------------------------------------------------------
 
-# NEW: group‑friendly keyword prompt – generates terms likely in group titles
 KEYWORD_PROMPT = """You are a tech recruiter looking for public Telegram GROUPS where software developers gather.
 
 We need to find groups where developers discuss programming, share knowledge, or look for jobs. Focus on groups where the **group name or description** likely contains these terms.
@@ -141,6 +140,12 @@ Messages:
 """
 
 
+# Old prompts removed – now only the two above are kept.
+# If you need the old ones, they are commented out below.
+# SEEKER_ANALYSIS_PROMPT = ...
+# RECRUITMENT_POST_PROMPT = ...
+
+
 # -------------------------------------------------------------------
 # JSON EXTRACTION
 # -------------------------------------------------------------------
@@ -153,15 +158,18 @@ def _strip_markdown(text: str) -> str:
 
 def _extract_json(text: str) -> Any:
     text = _strip_markdown(text)
+    # Strategy 1: direct
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+    # Strategy 2: remove trailing commas
     cleaned = re.sub(r',\s*([}\]])', r'\1', text)
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
+    # Strategy 3: bracket balancing
     start = None
     for i, ch in enumerate(text):
         if ch in '{[':
@@ -195,7 +203,7 @@ def _extract_json(text: str) -> Any:
 
 
 # -------------------------------------------------------------------
-# AI CALLS
+# AI CALLS with SEMAPHORE and RETRIES (updated to accept temperature)
 # -------------------------------------------------------------------
 def _call_groq_sync(prompt: str, temperature: float = 0.2) -> str:
     payload = {
@@ -263,8 +271,12 @@ def _call_gemini_sync(prompt: str, key_id: Optional[str] = None, model: Optional
 
 
 async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
+    """
+    Wrapper that uses a global semaphore to limit concurrency.
+    """
     async with _AI_SEMAPHORE:
         loop = asyncio.get_event_loop()
+        # Run the sync AI call in a thread pool
         return await loop.run_in_executor(
             None,
             functools.partial(_call_ai_sync, prompt, key_id=key_id, model=model, temperature=temperature)
@@ -272,6 +284,9 @@ async def _call_ai_async(prompt: str, key_id: Optional[str] = None, model: Optio
 
 
 def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str] = None, temperature: float = 0.2) -> str:
+    """
+    Try Gemini; on any error (except 429) fallback to Groq.
+    """
     gemini_key = _active_gemini_key or GEMINI_API_KEY
     if gemini_key:
         try:
@@ -284,9 +299,10 @@ def _call_ai_sync(prompt: str, key_id: Optional[str] = None, model: Optional[str
 
 
 # -------------------------------------------------------------------
-# FALLBACK KEYWORDS
+# PUBLIC FUNCTIONS
 # -------------------------------------------------------------------
 def _fallback_keywords(brand_name: str) -> List[str]:
+    # Updated fallback keywords for tech groups
     base = [
         "Python Developers", "C# Programming", "Node.js Dev", "AI Engineering",
         "Full Stack Developers", "Backend Engineers", "Frontend Devs",
@@ -309,9 +325,6 @@ def _fallback_keywords(brand_name: str) -> List[str]:
     return unique[:50]
 
 
-# -------------------------------------------------------------------
-# PUBLIC FUNCTIONS
-# -------------------------------------------------------------------
 async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) -> List[str]:
     prompt = KEYWORD_PROMPT.format(brand_name=brand_name)
     try:
@@ -321,7 +334,7 @@ async def generate_keywords(brand_name: str, model: str = DEFAULT_GEMINI_MODEL) 
             kw = data["keywords"]
             if isinstance(kw, list) and len(kw) >= 20:
                 while len(kw) < 50:
-                    kw.append(f"tech{len(kw)}")
+                    kw.append(f"{brand_name}search{len(kw)}")
                 return kw[:50]
         return _fallback_keywords(brand_name)
     except GeminiRateLimitError:
@@ -339,7 +352,9 @@ async def analyze_candidates(
     delay_between_chunks: float = 0.5,
 ) -> List[Dict[str, Any]]:
     """
-    Analyze messages to find qualified developer candidates.
+    Chunked analysis with rate control:
+      - chunk_size: messages per AI call (default 30)
+      - delay_between_chunks: seconds to wait after each chunk
     """
     if not messages_list:
         return []
@@ -349,6 +364,7 @@ async def analyze_candidates(
 
     for i in range(0, len(messages_list), chunk_size):
         chunk = messages_list[i:i+chunk_size]
+
         formatted_lines = []
         for m in chunk:
             if not m.get("text"):
@@ -385,10 +401,30 @@ async def analyze_candidates(
 
     unique = {}
     for c in all_candidates:
-        key = c.get("username", "")
-        if key not in unique or c.get("score", 0) > unique[key].get("score", 0):
-            unique[key] = c
+        username = c.get("username", "").strip()
+        if not username:
+            continue
+        if username not in unique or c.get("score", 0) > unique[username].get("score", 0):
+            unique[username] = c
 
     final = list(unique.values())
-    final.sort(key=lambda x: -int(x.get("score", 0)))
+    final.sort(
+        key=lambda x: (
+            0 if x.get("is_indian_likely") else 1,
+            -int(x.get("score", 0))
+        )
+    )
     return final[:15]
+
+
+# ================================================================
+# (Optional) analyze_seekers – if you still need it, uncomment and update
+# ================================================================
+# async def analyze_seekers(...):
+#     pass
+
+# ================================================================
+# (Optional) generate_recruitment_post – if needed
+# ================================================================
+# async def generate_recruitment_post(...):
+#     pass
